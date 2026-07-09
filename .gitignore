@@ -1,0 +1,22 @@
+__pycache__/
+.venv/
+venv/
+cache/
+.opencode/
+page.html
+A.html
+*.pyc          # 编译后的字节码文件（虽然 __pycache__/ 已覆盖，但根目录下也可能有）
+*.pyo          # 优化后的字节码
+*.pyd          # Windows 上的 Python 动态库（如果你用 C 扩展）
+build/         # 构建目录（setuptools 等）
+dist/          # 分发目录（打包后的 .whl, .tar.gz 等）
+*.egg-info/    # 包元数据目录
+.eggs/         # 临时 egg 目录
+*.log
+logs/
+tmp/
+temp/
+*.db
+*.sqlite
+*.sqlite3
+.webdata/
