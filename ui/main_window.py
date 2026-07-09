@@ -161,6 +161,15 @@ class MainWindow(QMainWindow):
         self._info_dialog.activateWindow()
 
     def _on_parse_clicked(self):
+        self.browser().page().runJavaScript(
+            "!!document.getElementById('__ar3_tab_overlay')",
+            self._on_parse_state_checked)
+
+    def _on_parse_state_checked(self, overlay_open):
+        if overlay_open:
+            self._adjuster.remove_layout()
+            self._status_bar.showMessage("已返回原页面")
+            return
         self._auto_apply_after_detect = True
         self._status_bar.showMessage("正在解析页面...")
         try:

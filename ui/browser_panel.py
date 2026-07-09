@@ -76,7 +76,7 @@ class BrowserPanel(QWidget):
 
         self._btn_parse = QPushButton("\u89e3\u6790")
         self._btn_parse.setObjectName("btnParse")
-        self._btn_parse.setToolTip("解析页面结构")
+        self._btn_parse.setToolTip("解析页面结构 / 返回原页面（切换）")
         self._btn_parse.setStyleSheet("""
             QPushButton#btnParse {
                 background-color: #0f3460;

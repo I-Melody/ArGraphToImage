@@ -311,6 +311,8 @@ APPLY_TABBED_LAYOUT = """
         rankListItems.push((el.childNodes[0] || {}).textContent || '');
     });
 
+    var modelScores = {};
+
     var lightbox = document.createElement('div');
     lightbox.id = '__ar3_lightbox';
     lightbox.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;background:rgba(0,0,0,0.9);cursor:pointer;align-items:center;justify-content:center;';
@@ -347,7 +349,10 @@ APPLY_TABBED_LAYOUT = """
 
     var bottomBar = document.createElement('div');
     bottomBar.id = '__ar3_rank_bar';
-    bottomBar.style.cssText = 'flex-shrink:0;background:#16213e;border-top:2px solid #2a2a4a;padding:8px 12px 10px;';
+    bottomBar.style.cssText = 'flex-shrink:0;background:#16213e;border-top:2px solid #2a2a4a;padding:8px 12px 10px;display:flex;align-items:stretch;gap:10px;';
+
+    var rankCols = document.createElement('div');
+    rankCols.style.cssText = 'flex:1;min-width:0;';
     var rankTitleRow = document.createElement('div');
     rankTitleRow.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;';
     var labels = ['RANK 1','RANK 2','RANK 3','RANK 4','RANK 5','RANK 6','RANK 7','RANK 8'];
@@ -357,7 +362,7 @@ APPLY_TABBED_LAYOUT = """
         badge.style.cssText = 'flex:1;text-align:center;padding:4px 0;border-radius:4px;font-size:12px;font-weight:bold;color:#fff;background:' + (rankColors[i] || '#333') + ';';
         rankTitleRow.appendChild(badge);
     });
-    bottomBar.appendChild(rankTitleRow);
+    rankCols.appendChild(rankTitleRow);
     var rankListRow = document.createElement('div');
     rankListRow.id = '__ar3_rank_list';
     rankListRow.style.cssText = 'display:flex;gap:4px;';
@@ -368,7 +373,59 @@ APPLY_TABBED_LAYOUT = """
         slot.innerHTML = '<span style="transform:rotate(90deg);opacity:0.4;font-size:10px;">|||</span> ' + name;
         rankListRow.appendChild(slot);
     });
-    bottomBar.appendChild(rankListRow);
+    rankCols.appendChild(rankListRow);
+    bottomBar.appendChild(rankCols);
+
+    // ---- 排序 button: rank models by in-app score (desc); ties share a rank ----
+    var _ar3_apply_rank_to_original = function(scored) {
+        try {
+            var rankGroups = document.querySelectorAll('.rank');
+            if (rankGroups.length < 2) return;
+            var listRank = rankGroups[rankGroups.length - 1];
+            var wrappers = listRank.children;
+            var byLetter = {};
+            for (var i = 0; i < wrappers.length; i++) {
+                var item = wrappers[i].querySelector('.rank-list-item');
+                if (!item) continue;
+                var m = (item.textContent || '').match(/模型([A-H])/);
+                if (m) byLetter[m[1]] = wrappers[i];
+            }
+            scored.forEach(function(s) {
+                var w = byLetter[s.letter];
+                if (w) listRank.appendChild(w);
+            });
+        } catch (e) {}
+    };
+
+    var _ar3_do_sort = function() {
+        var scored = modelLetters.map(function(L) {
+            return {letter: L, score: (typeof modelScores[L] === 'number' ? modelScores[L] : 0)};
+        });
+        scored.sort(function(a, b) { return b.score - a.score; });
+        scored.forEach(function(s, i) {
+            s.rank = (i > 0 && s.score === scored[i - 1].score) ? scored[i - 1].rank : (i + 1);
+        });
+        rankListRow.innerHTML = '';
+        scored.forEach(function(s) {
+            var color = rankColors[s.rank - 1] || '#333';
+            var slot = document.createElement('div');
+            slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';';
+            slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
+                '<span>模型' + s.letter + '</span>' +
+                '<span style="opacity:0.7;font-size:11px;">' + s.score + '分</span>';
+            rankListRow.appendChild(slot);
+        });
+        _ar3_apply_rank_to_original(scored);
+    };
+
+    var sortBtn = document.createElement('button');
+    sortBtn.id = '__ar3_sort_btn';
+    sortBtn.textContent = '排序';
+    sortBtn.title = '根据评分从高到低自动排序（同分同名次）';
+    sortBtn.style.cssText = 'flex-shrink:0;align-self:center;background:#e94560;color:#fff;border:none;border-radius:4px;padding:8px 18px;cursor:pointer;font-size:13px;font-weight:bold;white-space:nowrap;';
+    sortBtn.onclick = _ar3_do_sort;
+    bottomBar.appendChild(sortBtn);
+
     overlay.appendChild(bottomBar);
 
     var modelLetters = [];
@@ -432,12 +489,28 @@ APPLY_TABBED_LAYOUT = """
         // Column 3 — 评价
         var rightSide = document.createElement('div');
         rightSide.style.cssText = 'flex:1;min-width:0;padding:10px 14px;overflow-y:auto;background:#12122a;';
+        var evalHeader = document.createElement('div');
+        evalHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2a2a4a;';
         var evalTitle = document.createElement('div');
         evalTitle.textContent = '评价 - 模型' + letter;
-        evalTitle.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:bold;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2a2a4a;';
-        rightSide.appendChild(evalTitle);
+        evalTitle.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:bold;';
+        var scoreBadge = document.createElement('div');
+        scoreBadge.className = '__ar3_score_badge';
+        scoreBadge.style.cssText = 'font-size:13px;font-weight:bold;color:#e94560;background:#3a1a2e;border:1px solid #e94560;border-radius:4px;padding:3px 10px;white-space:nowrap;';
+        evalHeader.appendChild(evalTitle);
+        evalHeader.appendChild(scoreBadge);
+        rightSide.appendChild(evalHeader);
 
         var dims = evalByModel[letter] || [];
+        var _ar3_update_score = function() {
+            var total = 0;
+            dims.forEach(function(d) {
+                total += (typeof d.__ar3_score === 'number' ? d.__ar3_score : 0);
+            });
+            scoreBadge.textContent = '评分：' + total;
+            modelScores[letter] = total;
+        };
+
         dims.forEach(function(dim) {
             var card = document.createElement('div');
             card.className = '__ar3_dim_card';
@@ -566,11 +639,11 @@ APPLY_TABBED_LAYOUT = """
             sevRow.style.cssText = 'display:flex;gap:4px;';
 
             var btnDefs = [
-                {label: '一致', severity: '', value: '一致'},
-                {label: '轻度', severity: '轻度不一致', value: '不一致'},
-                {label: '中度', severity: '中度不一致', value: '不一致'},
-                {label: '重度', severity: '重度不一致', value: '不一致'},
-                {label: '不适用', severity: '', value: '不适用'}
+                {label: '一致', severity: '', value: '一致', score: 0},
+                {label: '轻度', severity: '轻度不一致', value: '不一致', score: -1},
+                {label: '中度', severity: '中度不一致', value: '不一致', score: -2},
+                {label: '重度', severity: '重度不一致', value: '不一致', score: -6},
+                {label: '不适用', severity: '', value: '不适用', score: 0}
             ];
 
             // Determine initial active state (read from wrapper class, not input.checked)
@@ -586,6 +659,7 @@ APPLY_TABBED_LAYOUT = """
             } else if (selectedVal === '不适用') {
                 activeIdx = 4;
             }
+            dim.__ar3_score = (activeIdx >= 0 ? btnDefs[activeIdx].score : 0);
 
             var _ar3_set_active = function(idx) {
                 // Guard against recursive re-entry from sync observer
@@ -595,6 +669,8 @@ APPLY_TABBED_LAYOUT = """
                 activeIdx = idx;
                 var def = btnDefs[idx];
                 reasonBox.setAttribute('data-severity', def.severity);
+                dim.__ar3_score = def.score;
+                _ar3_update_score();
 
                 // Update original checkboxes — search by label prefix
                 var allMS = document.querySelectorAll('.multiple-select');
@@ -642,19 +718,39 @@ APPLY_TABBED_LAYOUT = """
             });
             reasonBox.setAttribute('data-severity', btnDefs[Math.max(0, activeIdx)].severity || '');
 
-            reasonBox.appendChild(sevRow);
-            reasonBox.appendChild(fieldRowA);
-            reasonBox.appendChild(fieldRowB);
+            // Layout: the two inputs on the left, a single 确定 button on their right.
+            var inputsCol = document.createElement('div');
+            inputsCol.style.cssText = 'flex:1;min-width:0;';
+            inputsCol.appendChild(fieldRowA);
+            inputsCol.appendChild(fieldRowB);
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.className = '__ar3_confirm_btn';
+            confirmBtn.textContent = '确定';
+            confirmBtn.title = '将本项内容填入原页面';
+            confirmBtn.style.cssText = 'flex-shrink:0;width:56px;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
+            confirmBtn.addEventListener('click', function() {
+                _ar3_compose_reason(0, false);
+                dim.__ar3_dirty = false;
+                confirmBtn.textContent = '已填入';
+                confirmBtn.style.background = '#0e7a3a';
+                setTimeout(function() { confirmBtn.textContent = '确定'; confirmBtn.style.background = '#0f3460'; }, 1000);
+            });
+
+            var inputsWrap = document.createElement('div');
+            inputsWrap.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
+            inputsWrap.appendChild(inputsCol);
+            inputsWrap.appendChild(confirmBtn);
+
+            reasonBox.appendChild(inputsWrap);
             card.appendChild(sevRow);
             card.appendChild(reasonBox);
 
-            // Bind inputs — rescan original each time before writing
-            taA.addEventListener('input', function() {
-                _ar3_compose_reason();
-            });
-            taB.addEventListener('input', function() {
-                _ar3_compose_reason();
-            });
+            // Typing only marks the field dirty; the original page is written
+            // ONLY when 确定 is clicked (avoids the write->observer->overwrite loop
+            // that was interrupting input).
+            taA.addEventListener('input', function() { dim.__ar3_dirty = true; });
+            taB.addEventListener('input', function() { dim.__ar3_dirty = true; });
 
             // Initial visibility: show if 不一致 or 不適用
             var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致' || btnDefs[Math.max(0, activeIdx)].value === '不适用');
@@ -664,6 +760,8 @@ APPLY_TABBED_LAYOUT = """
 
             rightSide.appendChild(card);
         });
+
+        _ar3_update_score();
 
         panel.appendChild(rightSide);
         tabContent.appendChild(panel);
@@ -741,6 +839,10 @@ APPLY_TABBED_LAYOUT = """
                     }
                 }
                 if (!origInput) return;
+
+                // Skip sync for dimensions the user is currently editing —
+                // otherwise each write-then-observer cycle clobbers the textareas.
+                if (dim.__ar3_dirty || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
 
                 // Find corresponding MS to read checkbox state (by label text)
                 var allMS = document.querySelectorAll('.multiple-select');
