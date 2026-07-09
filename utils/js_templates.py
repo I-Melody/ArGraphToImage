@@ -814,7 +814,25 @@ APPLY_TABBED_LAYOUT = """
             }
             dim.__ar3_score = (activeIdx >= 0 ? btnDefs[activeIdx].score : 0);
 
-            var _ar3_set_active = function(idx) {
+            var dimIdx = -1;
+            (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
+
+            // Fill taA/taB from AI results. emptyOnly: keep existing text; skipHidden:
+            // only act when the reason box is visible (used by auto-fill on tab switch).
+            var _ar3_fill_from_ai = function(emptyOnly, skipHidden) {
+                if (skipHidden && reasonBox.style.display === 'none') return false;
+                var key = _ar3_ai_order[dimIdx];
+                if (!key) return false;
+                var aiRef = _ar3_get_ai('__ar3_ai_ref');
+                var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + letter);
+                var did = false;
+                if (aiRef && aiRef[key] != null && (!emptyOnly || !taA.value)) { taA.value = aiRef[key]; did = true; }
+                if (aiMod && aiMod[key] != null && (!emptyOnly || !taB.value)) { taB.value = aiMod[key]; did = true; }
+                if (did) dim.__ar3_dirty = true;
+                return did;
+            };
+
+            var _ar3_set_active = function(idx, noPropagate) {
                 // Guard against recursive re-entry from sync observer
                 if (dim.__ar3_settingActive) return;
                 dim.__ar3_settingActive = true;
@@ -839,8 +857,8 @@ APPLY_TABBED_LAYOUT = """
                     _ar3_apply_option(curDim, def.value);
                 }
 
-                // Show/hide reason box
-                var showReason = (def.value === '不一致' || def.value === '不适用');
+                // Show/hide reason box (hidden for 一致 and 不适用)
+                var showReason = (def.value === '不一致');
                 reasonBox.style.display = showReason ? 'block' : 'none';
 
                 // Update button styles
@@ -855,6 +873,19 @@ APPLY_TABBED_LAYOUT = """
                 // Delay to let iView's async tick create/remove the contenteditable div
                 var shouldClear = (def.value === '一致' || def.value === '不适用');
                 setTimeout(function() { _ar3_compose_reason(0, shouldClear); }, 300);
+
+                // Propagate 不适用 to the same dimension of every other model (one-key).
+                if (def.value === '不适用' && !noPropagate && dimIdx >= 0) {
+                    Object.keys(evalByModel).forEach(function(otherL) {
+                        if (otherL === letter) return;
+                        (evalByModel[otherL] || []).forEach(function(other) {
+                            var mm = (other.__ar3_dimPrefix || '').match(/(\\d+)$/);
+                            if (mm && parseInt(mm[1], 10) === dimIdx && other.__ar3_reasonInfo && other.__ar3_reasonInfo.setActive) {
+                                other.__ar3_reasonInfo.setActive(4, true);
+                            }
+                        });
+                    });
+                }
 
                 // Release guard after a tick
                 setTimeout(function() { dim.__ar3_settingActive = false; }, 300);
@@ -878,25 +909,18 @@ APPLY_TABBED_LAYOUT = """
             inputsCol.appendChild(fieldRowB);
 
             // ---- 填充AI button: fills taA/taB from the AI results ----
-            var dimIdx = -1;
-            (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
             var fillAiBtn = document.createElement('button');
             fillAiBtn.textContent = '填充AI';
             fillAiBtn.title = '将AI识别结果填入输入框';
             fillAiBtn.style.cssText = 'flex-shrink:0;align-self:flex-start;background:#1a1a2e;color:#5c7cfa;border:1px solid #5c7cfa;border-radius:4px;padding:5px 8px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;white-space:nowrap;';
             (function(ltr) {
                 fillAiBtn.onclick = function() {
-                    var aiRef = _ar3_get_ai('__ar3_ai_ref');
-                    var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + ltr);
-                    var key = _ar3_ai_order[dimIdx];
-                    if (aiRef && aiRef[key] != null) taA.value = aiRef[key];
-                    if (aiMod && aiMod[key] != null) taB.value = aiMod[key];
-                    if ((!aiRef || aiRef[key] == null) && (!aiMod || aiMod[key] == null)) {
+                    var did = _ar3_fill_from_ai(false, false);
+                    if (!did) {
                         fillAiBtn.textContent = '无AI数据';
                         setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1200);
                         return;
                     }
-                    dim.__ar3_dirty = true;
                     fillAiBtn.textContent = '已填充';
                     setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1000);
                 };
@@ -941,11 +965,11 @@ APPLY_TABBED_LAYOUT = """
             taA.addEventListener('input', function() { dim.__ar3_dirty = true; });
             taB.addEventListener('input', function() { dim.__ar3_dirty = true; });
 
-            // Initial visibility: show if 不一致 or 不適用
-            var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致' || btnDefs[Math.max(0, activeIdx)].value === '不适用');
+            // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
+            var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致');
             reasonBox.style.display = initShow ? 'block' : 'none';
 
-            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, btnDefs: btnDefs};
+            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, fillFromAi: _ar3_fill_from_ai, btnDefs: btnDefs};
 
             rightSide.appendChild(card);
         });
@@ -971,6 +995,11 @@ APPLY_TABBED_LAYOUT = """
         btn.style.color = '#e94560';
         btn.style.borderBottom = '2px solid #e94560';
         tabs[letter].panel.style.display = 'flex';
+
+        // Auto-fill this tab's visible inputs from AI results (empty fields only)
+        (evalByModel[letter] || []).forEach(function(d) {
+            if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.fillFromAi) d.__ar3_reasonInfo.fillFromAi(true, true);
+        });
     });
 
     document.body.appendChild(overlay);
@@ -1074,7 +1103,7 @@ APPLY_TABBED_LAYOUT = """
                 if (sevIdx < 0) return; // Can't determine state, skip
                 if (ri.setActive && sevIdx !== ri._activeIdx) {
                     ri._activeIdx = sevIdx;
-                    ri.setActive(sevIdx);
+                    ri.setActive(sevIdx, true);
                 }
             });
         });
