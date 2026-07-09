@@ -16,6 +16,7 @@ class AssistantPanel(QWidget):
     recognize_clicked = pyqtSignal()
     transform_clicked = pyqtSignal()
     remove_clicked = pyqtSignal()
+    capture_rank_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,6 +102,24 @@ class AssistantPanel(QWidget):
         """)
         self.btn_remove.clicked.connect(self.remove_clicked.emit)
         actions_layout.addWidget(self.btn_remove)
+
+        self.btn_capture = QPushButton("抓取排序")
+        self.btn_capture.setToolTip("抓取原页面排序栏结构（输出到信息面板 + rank_snapshot.json）")
+        self.btn_capture.setStyleSheet("""
+            QPushButton {
+                background: #2a2a5a;
+                color: #c0c0e0;
+                border: 1px solid #5c7cfa;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background: #3a3a6a;
+                color: #ffffff;
+            }
+        """)
+        self.btn_capture.clicked.connect(self.capture_rank_clicked.emit)
+        actions_layout.addWidget(self.btn_capture)
 
         layout.addWidget(actions_group)
 

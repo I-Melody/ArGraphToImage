@@ -327,24 +327,54 @@ APPLY_TABBED_LAYOUT = """
 
     // ---- AI describe: button + inline output under an image ----
     // Python drains window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
+    // Cached raw results per request id live in window.__ar3_last_ai (used by 填充AI
+    // and to keep the shared 参考图 description consistent across all tabs).
     window.__ar3_ai_queue = window.__ar3_ai_queue || [];
-    window.__ar3_ai_render = function(id, jsonStr) {
-        var out = document.getElementById(id);
-        if (!out) return;
-        if (out.__ar3_btn) { out.__ar3_btn.disabled = false; out.__ar3_btn.style.opacity = '1'; }
+    window.__ar3_last_ai = window.__ar3_last_ai || {};
+    window.__ar3_fill_btns = [];
+    window.__ar3_refresh_fill_btns = function() {
+        window.__ar3_fill_btns.forEach(function(f) { if (f && f.update) f.update(); });
+    };
+    var _ar3_ai_order = ['整体身份','整体形状与局部结构','颜色与材质','图案装饰logo商标','文字信息'];
+
+    var _ar3_get_ai = function(reqId) {
+        var raw = window.__ar3_last_ai[reqId];
+        if (!raw) return null;
+        try { return JSON.parse(raw); } catch (e) { return null; }
+    };
+
+    function _ar3_render_into(out, jsonStr) {
         var res;
         try { res = JSON.parse(jsonStr); } catch (e) { res = {error: '返回解析失败'}; }
         if (res && res.error) { out.textContent = 'AI失败：' + res.error; out.style.color = '#e94560'; return; }
         out.style.color = '#a0a0b0';
-        var order = ['整体身份','整体形状与局部结构','颜色与材质','图案装饰logo商标','文字信息'];
         var html = '';
-        order.forEach(function(k) {
+        _ar3_ai_order.forEach(function(k) {
             if (res[k] != null) html += '<div style="margin-bottom:4px;"><b style="color:#5c7cfa;">' + k + '：</b>' + String(res[k]) + '</div>';
         });
         out.innerHTML = html || ('<pre style="white-space:pre-wrap;margin:0;">' + (res.raw || JSON.stringify(res)) + '</pre>');
+    }
+
+    window.__ar3_ai_render = function(id, jsonStr) {
+        window.__ar3_last_ai[id] = jsonStr;
+        if (typeof window.__ar3_refresh_fill_btns === 'function') window.__ar3_refresh_fill_btns();
+        if (id === '__ar3_ai_ref') {
+            // 参考图 is shared: update every tab's ref output + re-enable every ref button
+            var outs = document.querySelectorAll('.__ar3_ai_ref_out');
+            for (var i = 0; i < outs.length; i++) {
+                if (outs[i].__ar3_btn) { outs[i].__ar3_btn.disabled = false; outs[i].__ar3_btn.style.opacity = '1'; }
+                _ar3_render_into(outs[i], jsonStr);
+            }
+            return;
+        }
+        var out = document.getElementById(id);
+        if (!out) return;
+        if (out.__ar3_btn) { out.__ar3_btn.disabled = false; out.__ar3_btn.style.opacity = '1'; }
+        _ar3_render_into(out, jsonStr);
     };
 
-    function _ar3_make_ai_row(slotId, getImg) {
+    function _ar3_make_ai_row(slotId, getImg, isRef) {
+        var reqId = isRef ? '__ar3_ai_ref' : slotId;
         var wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-top:6px;';
         var btn = document.createElement('button');
@@ -353,9 +383,11 @@ APPLY_TABBED_LAYOUT = """
         btn.style.cssText = 'flex-shrink:0;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
         var out = document.createElement('div');
         out.id = slotId;
-        out.className = '__ar3_ai_out';
+        out.className = '__ar3_ai_out' + (isRef ? ' __ar3_ai_ref_out' : '');
         out.style.cssText = 'flex:1;min-width:0;font-size:12px;color:#a0a0b0;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto;line-height:1.5;';
         out.__ar3_btn = btn;
+        // Restore any cached result (e.g. 参考图 already described in another tab)
+        if (window.__ar3_last_ai[reqId]) { _ar3_render_into(out, window.__ar3_last_ai[reqId]); }
         btn.onclick = function() {
             var img = getImg();
             if (!img || !img.src) { out.textContent = '无图片'; return; }
@@ -367,10 +399,17 @@ APPLY_TABBED_LAYOUT = """
                 c.getContext('2d').drawImage(img, 0, 0);
                 ref = c.toDataURL('image/jpeg', 0.9);
             } catch (e) { ref = img.src; }
-            out.style.color = '#a0a0b0';
-            out.textContent = 'AI识别中...';
-            btn.disabled = true; btn.style.opacity = '0.6';
-            window.__ar3_ai_queue.push({id: slotId, ref: ref});
+            if (isRef) {
+                var outs = document.querySelectorAll('.__ar3_ai_ref_out');
+                for (var i = 0; i < outs.length; i++) {
+                    outs[i].style.color = '#a0a0b0'; outs[i].textContent = 'AI识别中...';
+                    if (outs[i].__ar3_btn) { outs[i].__ar3_btn.disabled = true; outs[i].__ar3_btn.style.opacity = '0.6'; }
+                }
+            } else {
+                out.style.color = '#a0a0b0'; out.textContent = 'AI识别中...';
+                btn.disabled = true; btn.style.opacity = '0.6';
+            }
+            window.__ar3_ai_queue.push({id: reqId, ref: ref});
         };
         wrap.appendChild(btn);
         wrap.appendChild(out);
@@ -429,24 +468,81 @@ APPLY_TABBED_LAYOUT = """
     bottomBar.appendChild(rankCols);
 
     // ---- 排序 button: rank models by in-app score (desc); ties share a rank ----
-    var _ar3_apply_rank_to_original = function(scored) {
+    // The original page's rank list (.rank[last]) is 8 fixed .rank-content "buckets"
+    // aligned with the RANK1..8 titles. A tie = multiple .rank-list-item in the SAME
+    // bucket; trailing buckets become empty.
+    //
+    // The source of truth is a Vue 2 component `z-drag-sort_card` with $data.list =
+    // array of 8 arrays (one per bucket) of model objects {idx,label,value}. A pure DOM
+    // move is reverted when the page re-renders (e.g. on 确认), so we mutate that model
+    // directly. DOM move is kept as a fallback when the Vue instance can't be reached.
+    var _ar3_find_sort_card = function() {
+        var groups = document.querySelectorAll('.rank');
+        if (groups.length < 2) return null;
+        var listRank = groups[groups.length - 1];
+        var bucket = listRank.children[0];
+        var vm = bucket && bucket.__vue__;
+        for (var up = 0; up < 8 && vm; up++) {
+            if (vm.$data && Array.isArray(vm.$data.list) && vm.$data.list.length && Array.isArray(vm.$data.list[0])) {
+                return vm;
+            }
+            vm = vm.$parent;
+        }
+        return null;
+    };
+
+    var _ar3_letter_of = function(model) {
+        var lab = (model && (model.label || model.name || model.title || model.value)) + '';
+        var m = lab.match(/([A-H])(?!.*[A-H])/);
+        return m ? m[1] : '';
+    };
+
+    var _ar3_apply_rank_dom = function(scored) {
         try {
             var rankGroups = document.querySelectorAll('.rank');
             if (rankGroups.length < 2) return;
             var listRank = rankGroups[rankGroups.length - 1];
-            var wrappers = listRank.children;
+            var buckets = listRank.children;
+            if (!buckets || buckets.length === 0) return;
             var byLetter = {};
-            for (var i = 0; i < wrappers.length; i++) {
-                var item = wrappers[i].querySelector('.rank-list-item');
-                if (!item) continue;
-                var m = (item.textContent || '').match(/模型([A-H])/);
-                if (m) byLetter[m[1]] = wrappers[i];
-            }
+            listRank.querySelectorAll('.rank-list-item').forEach(function(it) {
+                var m = (it.textContent || '').match(/模型([A-H])/);
+                if (m) byLetter[m[1]] = it;
+            });
             scored.forEach(function(s) {
-                var w = byLetter[s.letter];
-                if (w) listRank.appendChild(w);
+                var it = byLetter[s.letter];
+                var bucket = buckets[s.rank - 1];
+                if (it && bucket && it.parentElement !== bucket) bucket.appendChild(it);
             });
         } catch (e) {}
+    };
+
+    var _ar3_apply_rank_to_original = function(scored) {
+        try {
+            var card = _ar3_find_sort_card();
+            if (!card) { _ar3_apply_rank_dom(scored); return; }
+            var oldList = card.$data.list;
+            var n = oldList.length;
+            // map letter -> model object (preserve original object identity/fields)
+            var byLetter = {};
+            oldList.forEach(function(arr) {
+                (arr || []).forEach(function(model) {
+                    var L = _ar3_letter_of(model);
+                    if (L) byLetter[L] = model;
+                });
+            });
+            var newList = [];
+            for (var i = 0; i < n; i++) newList.push([]);
+            scored.forEach(function(s) {
+                var model = byLetter[s.letter];
+                var bi = s.rank - 1;
+                if (model && bi >= 0 && bi < n) newList[bi].push(model);
+            });
+            card.list = newList;            // reactive reassign (Vue 2 detects this)
+            if (card.$forceUpdate) card.$forceUpdate();
+        } catch (e) {
+            _ar3_apply_rank_dom(scored);
+        }
     };
 
     var _ar3_do_sort = function() {
@@ -454,8 +550,11 @@ APPLY_TABBED_LAYOUT = """
             return {letter: L, score: (typeof modelScores[L] === 'number' ? modelScores[L] : 0)};
         });
         scored.sort(function(a, b) { return b.score - a.score; });
+        // Dense ranking (1,1,2,3...) — matches how the original page numbers ties.
+        var rankCounter = 0;
         scored.forEach(function(s, i) {
-            s.rank = (i > 0 && s.score === scored[i - 1].score) ? scored[i - 1].rank : (i + 1);
+            if (i === 0 || s.score !== scored[i - 1].score) rankCounter++;
+            s.rank = rankCounter;
         });
         rankListRow.innerHTML = '';
         scored.forEach(function(s) {
@@ -516,7 +615,7 @@ APPLY_TABBED_LAYOUT = """
             refBox.appendChild(ri);
         }
         refCol.appendChild(refBox);
-        refCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_ref_' + letter, (function(imgEl) { return function() { return imgEl; }; })(ri)));
+        refCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_ref_' + letter, (function(imgEl) { return function() { return imgEl; }; })(ri), true));
         panel.appendChild(refCol);
 
         // Column 2 — 模型图
@@ -537,7 +636,7 @@ APPLY_TABBED_LAYOUT = """
             modelBox.appendChild(mi);
         }
         modelCol.appendChild(modelBox);
-        modelCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_model_' + letter, (function(imgEl) { return function() { return imgEl; }; })(mi)));
+        modelCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_model_' + letter, (function(imgEl) { return function() { return imgEl; }; })(mi), false));
         panel.appendChild(modelCol);
 
         // Column 3 — 评价
@@ -778,6 +877,41 @@ APPLY_TABBED_LAYOUT = """
             inputsCol.appendChild(fieldRowA);
             inputsCol.appendChild(fieldRowB);
 
+            // ---- 填充AI button: fills taA/taB from the AI results ----
+            var dimIdx = -1;
+            (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
+            var fillAiBtn = document.createElement('button');
+            fillAiBtn.textContent = '填充AI';
+            fillAiBtn.title = '将AI识别结果填入输入框';
+            fillAiBtn.style.cssText = 'flex-shrink:0;align-self:flex-start;background:#1a1a2e;color:#5c7cfa;border:1px solid #5c7cfa;border-radius:4px;padding:5px 8px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;white-space:nowrap;';
+            (function(ltr) {
+                fillAiBtn.onclick = function() {
+                    var aiRef = _ar3_get_ai('__ar3_ai_ref');
+                    var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + ltr);
+                    var key = _ar3_ai_order[dimIdx];
+                    if (aiRef && aiRef[key] != null) taA.value = aiRef[key];
+                    if (aiMod && aiMod[key] != null) taB.value = aiMod[key];
+                    if ((!aiRef || aiRef[key] == null) && (!aiMod || aiMod[key] == null)) {
+                        fillAiBtn.textContent = '无AI数据';
+                        setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1200);
+                        return;
+                    }
+                    dim.__ar3_dirty = true;
+                    fillAiBtn.textContent = '已填充';
+                    setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1000);
+                };
+                var _fillUpdate = function() {
+                    var key = _ar3_ai_order[dimIdx];
+                    var aiRef = _ar3_get_ai('__ar3_ai_ref');
+                    var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + ltr);
+                    var has = (dimIdx >= 0) && ((aiRef && aiRef[key] != null) || (aiMod && aiMod[key] != null));
+                    fillAiBtn.style.opacity = has ? '1' : '0.5';
+                };
+                window.__ar3_fill_btns.push({update: _fillUpdate});
+                _fillUpdate();
+            })(letter);
+
+
             var confirmBtn = document.createElement('button');
             confirmBtn.className = '__ar3_confirm_btn';
             confirmBtn.textContent = '确定';
@@ -793,6 +927,7 @@ APPLY_TABBED_LAYOUT = """
 
             var inputsWrap = document.createElement('div');
             inputsWrap.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
+            inputsWrap.appendChild(fillAiBtn);
             inputsWrap.appendChild(inputsCol);
             inputsWrap.appendChild(confirmBtn);
 
@@ -1096,5 +1231,106 @@ DRAIN_AI_QUEUE = """
         items.push(JSON.stringify(r));
     }
     return '[' + items.join(',') + ']';
+})();
+"""
+
+CAPTURE_RANK_STRUCTURE = """
+(function() {
+    function norm(s) { return (s || '').replace(/\\s+/g, '').trim(); }
+    var out = {rank_group_count: 0, groups: []};
+    var groups = document.querySelectorAll('.rank');
+    out.rank_group_count = groups.length;
+    for (var g = 0; g < groups.length; g++) {
+        var rank = groups[g];
+        var info = {group_index: g, class: rank.className, child_count: rank.children.length, contents: []};
+        for (var i = 0; i < rank.children.length; i++) {
+            var rc = rank.children[i];
+            var title = rc.querySelector('.rank-title');
+            var items = rc.querySelectorAll('.rank-list-item');
+            var itemTexts = [];
+            for (var k = 0; k < items.length; k++) {
+                itemTexts.push(norm(items[k].textContent).replace(/[^\\u4e00-\\u9fa5A-H0-9]/g, ''));
+            }
+            info.contents.push({
+                idx: i,
+                tag: rc.tagName.toLowerCase(),
+                class: rc.className,
+                title: title ? norm(title.textContent) : null,
+                item_count: items.length,
+                items: itemTexts
+            });
+        }
+        out.groups.push(info);
+    }
+    // Vue hooks that might expose the underlying draggable model
+    var probe = document.querySelector('.rank-list-item');
+    if (probe) {
+        var p = probe;
+        var found = [];
+        for (var d = 0; d < 6 && p; d++) {
+            found.push({
+                depth: d,
+                tag: p.tagName ? p.tagName.toLowerCase() : '?',
+                class: (typeof p.className === 'string') ? p.className : '',
+                has__vue__: !!p.__vue__,
+                has__vueParentComponent: !!p.__vueParentComponent,
+                has__vnode: !!p.__vnode
+            });
+            p = p.parentElement;
+        }
+        out.vue_probe = found;
+    }
+
+    // Deep dump of the Vue 2 component driving the draggable buckets (read-only).
+    function _summ(v) {
+        try {
+            if (v === null || v === undefined) return v;
+            var t = typeof v;
+            if (t !== 'object') return (t === 'function') ? '<fn>' : v;
+            if (Array.isArray(v)) {
+                return {__array_len: v.length, sample: v.slice(0, 8).map(function(x) {
+                    if (x && typeof x === 'object') return {__keys: Object.keys(x).slice(0, 12), name: x.name || x.label || x.title || x.model || x.text};
+                    return x;
+                })};
+            }
+            return {__keys: Object.keys(v).slice(0, 25)};
+        } catch (e) { return '<err>'; }
+    }
+    try {
+        var rgs = document.querySelectorAll('.rank');
+        if (rgs.length >= 2) {
+            var lastRank = rgs[rgs.length - 1];
+            var bucket0 = lastRank.children[0];
+            var vm = bucket0 && bucket0.__vue__;
+            if (vm) {
+                var vmInfo = {
+                    tag: vm.$options && vm.$options._componentTag,
+                    dataKeys: vm.$data ? Object.keys(vm.$data) : [],
+                    propKeys: vm.$options && vm.$options.propsData ? Object.keys(vm.$options.propsData) : [],
+                    list: _summ(vm.list),
+                    value: _summ(vm.value),
+                    modelValue: _summ(vm.modelValue)
+                };
+                // walk up parents looking for an array-of-arrays (the 8 buckets model)
+                var chain = [];
+                var cur = vm;
+                for (var up = 0; up < 5 && cur; up++) {
+                    var dk = cur.$data ? Object.keys(cur.$data) : [];
+                    var arrs = {};
+                    dk.forEach(function(k) {
+                        var val = cur.$data[k];
+                        if (Array.isArray(val)) arrs[k] = _summ(val);
+                    });
+                    chain.push({depth: up, tag: cur.$options && cur.$options._componentTag, dataKeys: dk, arrays: arrs});
+                    cur = cur.$parent;
+                }
+                vmInfo.parent_chain = chain;
+                out.vue_model = vmInfo;
+            } else {
+                out.vue_model = {note: 'bucket0.__vue__ not found'};
+            }
+        }
+    } catch (e) { out.vue_model = {error: String(e)}; }
+    return JSON.stringify(out, null, 2);
 })();
 """

@@ -17,7 +17,7 @@ from core.layout_recognizer import analyze_detection
 from core.ai_client import AiClient
 from core import event_bus
 from config import manager as config
-from utils.js_templates import DRAIN_AI_QUEUE
+from utils.js_templates import DRAIN_AI_QUEUE, CAPTURE_RANK_STRUCTURE
 
 
 EDGE_MARGIN = 5
@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self._assistant_panel.recognize_clicked.connect(self._on_recognize_requested)
         self._assistant_panel.transform_clicked.connect(self._on_transform_requested)
         self._assistant_panel.remove_clicked.connect(self._on_remove_requested)
+        self._assistant_panel.capture_rank_clicked.connect(self._on_capture_rank)
 
         self._injector.page_detected.connect(self._on_page_detected)
         self._injector.detection_failed.connect(self._on_detection_failed)
@@ -166,6 +167,28 @@ class MainWindow(QMainWindow):
 
     def _on_remove_requested(self):
         self._adjuster.remove_layout()
+
+    def _on_capture_rank(self):
+        self._status_bar.showMessage("正在抓取排序结构...")
+        def callback(payload):
+            if not payload:
+                self._assistant_panel.log("[捕获] 无返回数据 (overlay未打开?)")
+                self._status_bar.showMessage("排序抓取失败")
+                return
+            try:
+                data = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                self._assistant_panel.log("[捕获] JSON解析失败: " + str(payload)[:100])
+                self._status_bar.showMessage("排序抓取失败")
+                return
+            pretty = json.dumps(data, ensure_ascii=False, indent=2)
+            self._assistant_panel.log("[捕获排序结构]\n" + pretty)
+            self._status_bar.showMessage("排序结构已抓取, 见信息面板")
+            # Also save to disk for offline analysis
+            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rank_snapshot.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(pretty)
+        self.browser().page().runJavaScript(CAPTURE_RANK_STRUCTURE, callback)
 
     def _on_content_changed(self, payload):
         changes = payload.get("changes", []) if isinstance(payload, dict) else []
