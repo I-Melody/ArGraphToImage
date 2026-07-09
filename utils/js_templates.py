@@ -325,6 +325,58 @@ APPLY_TABBED_LAYOUT = """
         lightbox.style.display = 'flex';
     }
 
+    // ---- AI describe: button + inline output under an image ----
+    // Python drains window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
+    window.__ar3_ai_queue = window.__ar3_ai_queue || [];
+    window.__ar3_ai_render = function(id, jsonStr) {
+        var out = document.getElementById(id);
+        if (!out) return;
+        if (out.__ar3_btn) { out.__ar3_btn.disabled = false; out.__ar3_btn.style.opacity = '1'; }
+        var res;
+        try { res = JSON.parse(jsonStr); } catch (e) { res = {error: '返回解析失败'}; }
+        if (res && res.error) { out.textContent = 'AI失败：' + res.error; out.style.color = '#e94560'; return; }
+        out.style.color = '#a0a0b0';
+        var order = ['整体身份','整体形状与局部结构','颜色与材质','图案装饰logo商标','文字信息'];
+        var html = '';
+        order.forEach(function(k) {
+            if (res[k] != null) html += '<div style="margin-bottom:4px;"><b style="color:#5c7cfa;">' + k + '：</b>' + String(res[k]) + '</div>';
+        });
+        out.innerHTML = html || ('<pre style="white-space:pre-wrap;margin:0;">' + (res.raw || JSON.stringify(res)) + '</pre>');
+    };
+
+    function _ar3_make_ai_row(slotId, getImg) {
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-top:6px;';
+        var btn = document.createElement('button');
+        btn.textContent = 'AI';
+        btn.title = '用智谱AI(GLM-4.6V)描述该图片';
+        btn.style.cssText = 'flex-shrink:0;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
+        var out = document.createElement('div');
+        out.id = slotId;
+        out.className = '__ar3_ai_out';
+        out.style.cssText = 'flex:1;min-width:0;font-size:12px;color:#a0a0b0;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto;line-height:1.5;';
+        out.__ar3_btn = btn;
+        btn.onclick = function() {
+            var img = getImg();
+            if (!img || !img.src) { out.textContent = '无图片'; return; }
+            var ref = img.src;
+            try {
+                var c = document.createElement('canvas');
+                c.width = img.naturalWidth || img.width;
+                c.height = img.naturalHeight || img.height;
+                c.getContext('2d').drawImage(img, 0, 0);
+                ref = c.toDataURL('image/jpeg', 0.9);
+            } catch (e) { ref = img.src; }
+            out.style.color = '#a0a0b0';
+            out.textContent = 'AI识别中...';
+            btn.disabled = true; btn.style.opacity = '0.6';
+            window.__ar3_ai_queue.push({id: slotId, ref: ref});
+        };
+        wrap.appendChild(btn);
+        wrap.appendChild(out);
+        return wrap;
+    }
+
     var overlay = document.createElement('div');
     overlay.id = '__ar3_tab_overlay';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:#1a1a2e;display:flex;flex-direction:column;font-family:"Microsoft YaHei",sans-serif;';
@@ -464,6 +516,7 @@ APPLY_TABBED_LAYOUT = """
             refBox.appendChild(ri);
         }
         refCol.appendChild(refBox);
+        refCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_ref_' + letter, (function(imgEl) { return function() { return imgEl; }; })(ri)));
         panel.appendChild(refCol);
 
         // Column 2 — 模型图
@@ -484,6 +537,7 @@ APPLY_TABBED_LAYOUT = """
             modelBox.appendChild(mi);
         }
         modelCol.appendChild(modelBox);
+        modelCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_model_' + letter, (function(imgEl) { return function() { return imgEl; }; })(mi)));
         panel.appendChild(modelCol);
 
         // Column 3 — 评价
@@ -1029,5 +1083,18 @@ SCAN_PAGE_FOR_TEXT = """
     });
 
     return JSON.stringify({target: target, matches: results, total: results.length});
+})();
+"""
+
+DRAIN_AI_QUEUE = """
+(function() {
+    var q = window.__ar3_ai_queue || [];
+    if (q.length === 0) return '[]';
+    var items = [];
+    while (q.length > 0) {
+        var r = q.shift();
+        items.push(JSON.stringify(r));
+    }
+    return '[' + items.join(',') + ']';
 })();
 """

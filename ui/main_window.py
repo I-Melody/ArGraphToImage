@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 
 import os
+import json
 
 from ui.title_bar import TitleBar
 from ui.browser_panel import BrowserPanel
@@ -13,8 +14,10 @@ from ui.assistant_panel import AssistantPanel
 from core.browser_injector import BrowserInjector
 from core.layout_adjuster import LayoutAdjuster
 from core.layout_recognizer import analyze_detection
+from core.ai_client import AiClient
 from core import event_bus
 from config import manager as config
+from utils.js_templates import DRAIN_AI_QUEUE
 
 
 EDGE_MARGIN = 5
@@ -59,6 +62,8 @@ class MainWindow(QMainWindow):
         self._adjuster = LayoutAdjuster(self._injector)
         self._assistant_panel = AssistantPanel(self)
         self._info_dialog = None
+        self._ai_client = AiClient(self)
+        self._ai_client.describe_done.connect(self._on_ai_described)
 
     def _setup_monitoring(self):
         cfg = config.load()
@@ -71,6 +76,10 @@ class MainWindow(QMainWindow):
         self._redetect_timer.setSingleShot(True)
         self._redetect_timer.setInterval(debounce)
         self._redetect_timer.timeout.connect(self._refresh_recognition)
+
+        self._ai_timer = QTimer(self)
+        self._ai_timer.setInterval(400)
+        self._ai_timer.timeout.connect(self._poll_ai_requests)
 
     def _connect_signals(self):
         self._browser_panel.title_changed.connect(self._on_page_title_changed)
@@ -125,6 +134,27 @@ class MainWindow(QMainWindow):
         event_bus.page_loaded.emit(url)
         self._injector.start_monitoring()
         self._monitor_timer.start()
+        self._ai_timer.start()
+
+    def _poll_ai_requests(self):
+        self.browser().page().runJavaScript(DRAIN_AI_QUEUE, self._dispatch_ai_requests)
+
+    def _dispatch_ai_requests(self, payload):
+        if not payload or payload == "[]":
+            return
+        try:
+            requests = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        for req in requests:
+            rid = req.get("id")
+            ref = req.get("ref")
+            if rid and ref:
+                self._ai_client.describe(rid, ref)
+
+    def _on_ai_described(self, request_id, result_json):
+        js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"
+        self.browser().page().runJavaScript(js)
 
     def _on_recognize_requested(self):
         self._auto_apply_after_detect = False
