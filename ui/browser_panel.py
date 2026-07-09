@@ -11,7 +11,7 @@ class BrowserPanel(QWidget):
     load_started = pyqtSignal()
     load_finished = pyqtSignal(bool)
     parse_clicked = pyqtSignal()
-    recognize_clicked = pyqtSignal()
+    recognize_clicked = pyqtSignal()  # i.e. "信息" button
 
     def __init__(self, parent=None, profile=None):
         super().__init__(parent)
@@ -70,8 +70,8 @@ class BrowserPanel(QWidget):
         self._btn_go.setToolTip("转到")
         self._btn_go.clicked.connect(self._on_url_entered)
 
-        self._btn_save = QPushButton("\u8bc6\u522b")
-        self._btn_save.setToolTip("保存当前页面到 page.html")
+        self._btn_save = QPushButton("\u4fe1\u606f")
+        self._btn_save.setToolTip("显示识别信息面板")
         self._btn_save.clicked.connect(self.recognize_clicked.emit)
 
         self._btn_parse = QPushButton("\u89e3\u6790")

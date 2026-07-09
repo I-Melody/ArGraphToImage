@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt, QRect, QTimer
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QStatusBar, QApplication,
-    QMessageBox
+    QMessageBox, QDialog, QDialogButtonBox
 )
 
 import os
@@ -51,21 +51,14 @@ class MainWindow(QMainWindow):
         self._title_bar = TitleBar(self)
         root_layout.addWidget(self._title_bar)
 
-        content = QWidget()
-        content_layout = QHBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-
         self._browser_panel = BrowserPanel(self, profile=profile)
-        self._assistant_panel = AssistantPanel(self)
-        content_layout.addWidget(self._browser_panel, 1)
-        content_layout.addWidget(self._assistant_panel)
-
-        root_layout.addWidget(content, 1)
+        root_layout.addWidget(self._browser_panel, 1)
 
     def _setup_core(self):
         self._injector = BrowserInjector(self.browser(), self)
         self._adjuster = LayoutAdjuster(self._injector)
+        self._assistant_panel = AssistantPanel(self)
+        self._info_dialog = None
 
     def _setup_monitoring(self):
         cfg = config.load()
@@ -85,7 +78,7 @@ class MainWindow(QMainWindow):
         self._browser_panel.load_started.connect(lambda: self._status_bar.showMessage("加载中..."))
         self._browser_panel.load_finished.connect(self._on_load_finished)
         self._browser_panel.parse_clicked.connect(self._on_parse_clicked)
-        self._browser_panel.recognize_clicked.connect(self._on_save_page)
+        self._browser_panel.recognize_clicked.connect(self._on_info_clicked)
 
         self._assistant_panel.recognize_clicked.connect(self._on_recognize_requested)
         self._assistant_panel.transform_clicked.connect(self._on_transform_requested)
@@ -154,14 +147,18 @@ class MainWindow(QMainWindow):
         self._auto_apply_after_detect = False
         self._injector.detect_page_structure()
 
-    def _on_save_page(self):
-        self._status_bar.showMessage("正在保存页面...")
-        def callback(html):
-            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "page.html")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(html)
-            self._status_bar.showMessage(f"页面已保存: page.html ({len(html)} 字符)")
-        self.browser().page().toHtml(callback)
+    def _on_info_clicked(self):
+        if self._info_dialog is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("识别信息")
+            dlg.resize(340, 640)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addWidget(self._assistant_panel)
+            self._info_dialog = dlg
+        self._info_dialog.show()
+        self._info_dialog.raise_()
+        self._info_dialog.activateWindow()
 
     def _on_parse_clicked(self):
         self._auto_apply_after_detect = True

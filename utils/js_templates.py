@@ -239,7 +239,7 @@ APPLY_TABBED_LAYOUT = """
             '.__ar3_reason_box .__ar3_reason_input{width:100%;min-height:56px;max-height:160px;overflow-y:auto;background:#12122a;color:#e0e0e0;border:1px solid #2a2a4a;border-radius:4px;padding:6px 8px;font-size:13px;line-height:1.5;box-sizing:border-box;white-space:pre-wrap;word-break:break-word;outline:none}' +
             '.__ar3_reason_box .__ar3_reason_input:focus{border-color:#5c7cfa}' +
             '.__ar3_reason_box .__ar3_reason_input:empty:before{content:attr(data-placeholder);color:#606080}' +
-            '.__ar3_img_side{width:50%;position:relative;cursor:pointer;overflow:hidden;border-radius:8px;background:#16213e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px}' +
+            '.__ar3_img_side{width:100%;height:100%;position:relative;cursor:pointer;overflow:hidden;border-radius:8px;background:#16213e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px}' +
             '.__ar3_img_side img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;transition:transform 0.2s}' +
             '.__ar3_img_side:hover img{transform:scale(1.02)}' +
             '.__ar3_img_label{color:#a0a0b0;font-size:12px;padding:6px 0;position:absolute;top:4px;left:10px}';
@@ -389,11 +389,11 @@ APPLY_TABBED_LAYOUT = """
 
         var panel = document.createElement('div');
         panel.id = '__ar3_panel_' + letter;
-        panel.style.cssText = 'flex:1;display:' + (idx === 0 ? 'flex' : 'none') + ';height:100%;overflow:hidden;';
+        panel.style.cssText = 'flex:1;display:' + (idx === 0 ? 'flex' : 'none') + ';height:100%;overflow:hidden;flex-direction:row;';
 
-        var leftSide = document.createElement('div');
-        leftSide.style.cssText = 'flex:4;min-width:0;display:flex;flex-direction:column;gap:10px;padding:10px;overflow-y:auto;border-right:1px solid #2a2a4a;';
-
+        // Column 1 — 参考图
+        var refCol = document.createElement('div');
+        refCol.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;padding:10px;gap:4px;overflow-y:auto;border-right:1px solid #2a2a4a;';
         var refBox = document.createElement('div');
         refBox.className = '__ar3_img_side';
         refBox.innerHTML = '<span class="__ar3_img_label">参考图</span>';
@@ -406,8 +406,12 @@ APPLY_TABBED_LAYOUT = """
             ri.onclick = function(e) { e.stopPropagation(); showLightbox(ri.src); };
             refBox.appendChild(ri);
         }
-        leftSide.appendChild(refBox);
+        refCol.appendChild(refBox);
+        panel.appendChild(refCol);
 
+        // Column 2 — 模型图
+        var modelCol = document.createElement('div');
+        modelCol.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;padding:10px;gap:4px;overflow-y:auto;border-right:1px solid #2a2a4a;';
         var modelBox = document.createElement('div');
         modelBox.className = '__ar3_img_side';
         modelBox.innerHTML = '<span class="__ar3_img_label">模型' + letter + '</span>';
@@ -422,11 +426,12 @@ APPLY_TABBED_LAYOUT = """
             mi.onclick = function(e) { e.stopPropagation(); showLightbox(mi.src); };
             modelBox.appendChild(mi);
         }
-        leftSide.appendChild(modelBox);
-        panel.appendChild(leftSide);
+        modelCol.appendChild(modelBox);
+        panel.appendChild(modelCol);
 
+        // Column 3 — 评价
         var rightSide = document.createElement('div');
-        rightSide.style.cssText = 'flex:3;min-width:0;padding:10px 14px;overflow-y:auto;background:#12122a;';
+        rightSide.style.cssText = 'flex:1;min-width:0;padding:10px 14px;overflow-y:auto;background:#12122a;';
         var evalTitle = document.createElement('div');
         evalTitle.textContent = '评价 - 模型' + letter;
         evalTitle.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:bold;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2a2a4a;';
