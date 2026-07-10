@@ -150,8 +150,9 @@ class MainWindow(QMainWindow):
         for req in requests:
             rid = req.get("id")
             ref = req.get("ref")
-            if rid and ref:
-                self._ai_client.describe(rid, ref)
+            model = req.get("model")
+            if rid and ref and model:
+                self._ai_client.compare(rid, ref, model)
 
     def _on_ai_described(self, request_id, result_json):
         js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"

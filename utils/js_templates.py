@@ -313,24 +313,53 @@ APPLY_TABBED_LAYOUT = """
 
     var modelScores = {};
 
+    // Lightbox — remove any stale one from a previous APPLY so we never end up with
+    // duplicate #__ar3_lightbox nodes (which caused a black screen with no image).
+    var _oldLb = document.getElementById('__ar3_lightbox');
+    if (_oldLb && _oldLb.parentNode) _oldLb.parentNode.removeChild(_oldLb);
+
     var lightbox = document.createElement('div');
     lightbox.id = '__ar3_lightbox';
-    lightbox.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;background:rgba(0,0,0,0.9);cursor:pointer;align-items:center;justify-content:center;';
-    lightbox.innerHTML = '<img id="__ar3_lightbox_img" style="max-width:95%;max-height:95%;object-fit:contain;border-radius:6px;box-shadow:0 0 40px rgba(0,0,0,0.6);">';
+    lightbox.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;background:rgba(0,0,0,0.9);cursor:zoom-out;align-items:center;justify-content:center;overflow:hidden;';
+    var lightboxImg = document.createElement('img');
+    lightboxImg.id = '__ar3_lightbox_img';
+    lightboxImg.style.cssText = 'max-width:95%;max-height:95%;object-fit:contain;border-radius:6px;box-shadow:0 0 40px rgba(0,0,0,0.6);transform-origin:center center;cursor:grab;';
+    lightbox.appendChild(lightboxImg);
+    // Click background to close; clicking the image itself does not close (so you can zoom).
     lightbox.onclick = function() { lightbox.style.display = 'none'; };
+    lightboxImg.onclick = function(e) { e.stopPropagation(); };
     document.body.appendChild(lightbox);
 
+    var _ar3_lb_scale = 1;
     function showLightbox(src) {
-        document.getElementById('__ar3_lightbox_img').src = src;
+        lightboxImg.src = src;
+        _ar3_lb_scale = 1;
+        lightboxImg.style.transform = 'scale(1)';
         lightbox.style.display = 'flex';
     }
+    // Scroll wheel zooms the enlarged image.
+    lightbox.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        _ar3_lb_scale *= (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+        if (_ar3_lb_scale < 0.2) _ar3_lb_scale = 0.2;
+        if (_ar3_lb_scale > 12) _ar3_lb_scale = 12;
+        lightboxImg.style.transform = 'scale(' + _ar3_lb_scale + ')';
+    }, {passive: false});
 
-    // ---- AI describe: button + inline output under an image ----
-    // Python drains window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
-    // Cached raw results per request id live in window.__ar3_last_ai (used by 填充AI
-    // and to keep the shared 参考图 description consistent across all tabs).
+    // ---- AI compare: one button per tab uploads BOTH 参考图 + 模型图 and asks the
+    // model to describe their per-dimension DIFFERENCES. Python drains
+    // window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
+    // Cached raw results per request id (e.g. '__ar3_ai_cmp_A') live in window.__ar3_last_ai.
     window.__ar3_ai_queue = window.__ar3_ai_queue || [];
-    window.__ar3_last_ai = window.__ar3_last_ai || {};
+    if (typeof window.__ar3_last_ai !== 'object' || !window.__ar3_last_ai) window.__ar3_last_ai = {};
+    // Task signature = current reference-image src. If it changed since the previous
+    // overlay build, the cached comparisons belong to a previous 题目 → drop them so a
+    // new question does NOT auto-fill with the last question's AI content.
+    var _ar3_task_sig = (function() { var im = refItem && refItem.querySelector('img.img'); return im ? im.src : ''; })();
+    if (window.__ar3_ai_task_sig !== _ar3_task_sig) {
+        window.__ar3_last_ai = {};
+        window.__ar3_ai_task_sig = _ar3_task_sig;
+    }
     window.__ar3_fill_btns = [];
     window.__ar3_refresh_fill_btns = function() {
         window.__ar3_fill_btns.forEach(function(f) { if (f && f.update) f.update(); });
@@ -343,6 +372,17 @@ APPLY_TABBED_LAYOUT = """
         try { return JSON.parse(raw); } catch (e) { return null; }
     };
 
+    var _ar3_grab_img = function(img) {
+        if (!img || !img.src) return null;
+        try {
+            var c = document.createElement('canvas');
+            c.width = img.naturalWidth || img.width;
+            c.height = img.naturalHeight || img.height;
+            c.getContext('2d').drawImage(img, 0, 0);
+            return c.toDataURL('image/jpeg', 0.9);
+        } catch (e) { return img.src; }
+    };
+
     function _ar3_render_into(out, jsonStr) {
         var res;
         try { res = JSON.parse(jsonStr); } catch (e) { res = {error: '返回解析失败'}; }
@@ -350,7 +390,17 @@ APPLY_TABBED_LAYOUT = """
         out.style.color = '#a0a0b0';
         var html = '';
         _ar3_ai_order.forEach(function(k) {
-            if (res[k] != null) html += '<div style="margin-bottom:4px;"><b style="color:#5c7cfa;">' + k + '：</b>' + String(res[k]) + '</div>';
+            var v = res[k];
+            if (v == null) return;
+            if (typeof v === 'object') {
+                html += '<div style="margin-bottom:6px;"><b style="color:#5c7cfa;">' + k + '</b>';
+                if (v['参考图'] != null) html += '<div>参考图：' + String(v['参考图']) + '</div>';
+                if (v['生成图'] != null) html += '<div>生成图：' + String(v['生成图']) + '</div>';
+                if (v['差异'] != null) html += '<div style="color:#e0a030;">差异：' + String(v['差异']) + '</div>';
+                html += '</div>';
+            } else {
+                html += '<div style="margin-bottom:4px;"><b style="color:#5c7cfa;">' + k + '：</b>' + String(v) + '</div>';
+            }
         });
         out.innerHTML = html || ('<pre style="white-space:pre-wrap;margin:0;">' + (res.raw || JSON.stringify(res)) + '</pre>');
     }
@@ -358,58 +408,34 @@ APPLY_TABBED_LAYOUT = """
     window.__ar3_ai_render = function(id, jsonStr) {
         window.__ar3_last_ai[id] = jsonStr;
         if (typeof window.__ar3_refresh_fill_btns === 'function') window.__ar3_refresh_fill_btns();
-        if (id === '__ar3_ai_ref') {
-            // 参考图 is shared: update every tab's ref output + re-enable every ref button
-            var outs = document.querySelectorAll('.__ar3_ai_ref_out');
-            for (var i = 0; i < outs.length; i++) {
-                if (outs[i].__ar3_btn) { outs[i].__ar3_btn.disabled = false; outs[i].__ar3_btn.style.opacity = '1'; }
-                _ar3_render_into(outs[i], jsonStr);
-            }
-            return;
-        }
         var out = document.getElementById(id);
         if (!out) return;
         if (out.__ar3_btn) { out.__ar3_btn.disabled = false; out.__ar3_btn.style.opacity = '1'; }
         _ar3_render_into(out, jsonStr);
     };
 
-    function _ar3_make_ai_row(slotId, getImg, isRef) {
-        var reqId = isRef ? '__ar3_ai_ref' : slotId;
+    // Comparison button/output for one tab (参考图 vs that model图).
+    function _ar3_make_ai_cmp_row(letter, getRefImg, getModelImg) {
+        var reqId = '__ar3_ai_cmp_' + letter;
         var wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-top:6px;';
         var btn = document.createElement('button');
-        btn.textContent = 'AI';
-        btn.title = '用智谱AI(GLM-4.6V)描述该图片';
+        btn.textContent = 'AI对比';
+        btn.title = '同时上传参考图与模型图，用智谱AI(GLM-4.6V)对比两图差异';
         btn.style.cssText = 'flex-shrink:0;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
         var out = document.createElement('div');
-        out.id = slotId;
-        out.className = '__ar3_ai_out' + (isRef ? ' __ar3_ai_ref_out' : '');
+        out.id = reqId;
+        out.className = '__ar3_ai_out';
         out.style.cssText = 'flex:1;min-width:0;font-size:12px;color:#a0a0b0;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto;line-height:1.5;';
         out.__ar3_btn = btn;
-        // Restore any cached result (e.g. 参考图 already described in another tab)
         if (window.__ar3_last_ai[reqId]) { _ar3_render_into(out, window.__ar3_last_ai[reqId]); }
         btn.onclick = function() {
-            var img = getImg();
-            if (!img || !img.src) { out.textContent = '无图片'; return; }
-            var ref = img.src;
-            try {
-                var c = document.createElement('canvas');
-                c.width = img.naturalWidth || img.width;
-                c.height = img.naturalHeight || img.height;
-                c.getContext('2d').drawImage(img, 0, 0);
-                ref = c.toDataURL('image/jpeg', 0.9);
-            } catch (e) { ref = img.src; }
-            if (isRef) {
-                var outs = document.querySelectorAll('.__ar3_ai_ref_out');
-                for (var i = 0; i < outs.length; i++) {
-                    outs[i].style.color = '#a0a0b0'; outs[i].textContent = 'AI识别中...';
-                    if (outs[i].__ar3_btn) { outs[i].__ar3_btn.disabled = true; outs[i].__ar3_btn.style.opacity = '0.6'; }
-                }
-            } else {
-                out.style.color = '#a0a0b0'; out.textContent = 'AI识别中...';
-                btn.disabled = true; btn.style.opacity = '0.6';
-            }
-            window.__ar3_ai_queue.push({id: reqId, ref: ref});
+            var refImg = getRefImg(), modImg = getModelImg();
+            var refRef = _ar3_grab_img(refImg), modRef = _ar3_grab_img(modImg);
+            if (!refRef || !modRef) { out.textContent = '缺少参考图或模型图'; return; }
+            out.style.color = '#a0a0b0'; out.textContent = 'AI对比中...';
+            btn.disabled = true; btn.style.opacity = '0.6';
+            window.__ar3_ai_queue.push({id: reqId, ref: refRef, model: modRef});
         };
         wrap.appendChild(btn);
         wrap.appendChild(out);
@@ -429,7 +455,7 @@ APPLY_TABBED_LAYOUT = """
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '返回原页面';
     closeBtn.style.cssText = 'flex-shrink:0;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
-    closeBtn.onclick = function() { document.body.removeChild(overlay); window.__ar3_tabs = null; };
+    closeBtn.onclick = function() { document.body.removeChild(overlay); if (lightbox.parentNode) lightbox.parentNode.removeChild(lightbox); window.__ar3_tabs = null; };
     topBar.appendChild(closeBtn);
     overlay.appendChild(topBar);
 
@@ -563,7 +589,7 @@ APPLY_TABBED_LAYOUT = """
             slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';';
             slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
                 '<span>模型' + s.letter + '</span>' +
-                '<span style="opacity:0.7;font-size:11px;">' + s.score + '分</span>';
+                '<span style="opacity:0.7;font-size:11px;">' + (s.score / 100).toFixed(2) + '分</span>';
             rankListRow.appendChild(slot);
         });
         _ar3_apply_rank_to_original(scored);
@@ -615,7 +641,29 @@ APPLY_TABBED_LAYOUT = """
             refBox.appendChild(ri);
         }
         refCol.appendChild(refBox);
-        refCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_ref_' + letter, (function(imgEl) { return function() { return imgEl; }; })(ri), true));
+
+        // ---- Preserve-description block under the reference image ----
+        var _ar3_preserve_text = '';
+        try {
+            var pdContainer = document.getElementById('engine0_default_item_preserve_description');
+            if (pdContainer) {
+                var tc = pdContainer.querySelector('.text-content');
+                if (tc) _ar3_preserve_text = (tc.textContent || '').trim();
+            }
+        } catch (e) {}
+        if (_ar3_preserve_text) {
+            var pdBlock = document.createElement('div');
+            pdBlock.style.cssText = 'margin-top:6px;padding:8px 10px;background:#16213e;border:1px solid #2a2a4a;border-radius:6px;font-size:12px;color:#a0a0b0;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow-y:auto;';
+            var pdTitle = document.createElement('div');
+            pdTitle.textContent = '题目描述';
+            pdTitle.style.cssText = 'font-size:11px;color:#5c7cfa;font-weight:bold;margin-bottom:4px;';
+            pdBlock.appendChild(pdTitle);
+            var pdText = document.createElement('div');
+            pdText.textContent = _ar3_preserve_text;
+            pdBlock.appendChild(pdText);
+            refCol.appendChild(pdBlock);
+        }
+
         panel.appendChild(refCol);
 
         // Column 2 — 模型图
@@ -636,7 +684,10 @@ APPLY_TABBED_LAYOUT = """
             modelBox.appendChild(mi);
         }
         modelCol.appendChild(modelBox);
-        modelCol.appendChild(_ar3_make_ai_row('__ar3_ai_out_model_' + letter, (function(imgEl) { return function() { return imgEl; }; })(mi), false));
+        modelCol.appendChild(_ar3_make_ai_cmp_row(
+            letter,
+            (function(imgEl) { return function() { return imgEl; }; })(ri),
+            (function(imgEl) { return function() { return imgEl; }; })(mi)));
         panel.appendChild(modelCol);
 
         // Column 3 — 评价
@@ -660,7 +711,7 @@ APPLY_TABBED_LAYOUT = """
             dims.forEach(function(d) {
                 total += (typeof d.__ar3_score === 'number' ? d.__ar3_score : 0);
             });
-            scoreBadge.textContent = '评分：' + total;
+            scoreBadge.textContent = '评分：' + (total / 100).toFixed(2);
             modelScores[letter] = total;
         };
 
@@ -671,10 +722,14 @@ APPLY_TABBED_LAYOUT = """
             var labelEl = dim.querySelector('.ivu-form-item-label, label');
             var dimLabel = labelEl ? labelEl.textContent.trim() : '';
 
+            var dimHeader = document.createElement('div');
+            dimHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
             var dimTitle = document.createElement('div');
             dimTitle.textContent = dimLabel;
             dimTitle.className = '__ar3_dim_title';
-            card.appendChild(dimTitle);
+            dimTitle.style.marginBottom = '0';
+            dimHeader.appendChild(dimTitle);
+            card.appendChild(dimHeader);
 
             // ---- Find original remark input by matching dimension label prefix ----
             dim.__ar3_dimPrefix = '';
@@ -793,9 +848,9 @@ APPLY_TABBED_LAYOUT = """
 
             var btnDefs = [
                 {label: '一致', severity: '', value: '一致', score: 0},
-                {label: '轻度', severity: '轻度不一致', value: '不一致', score: -1},
-                {label: '中度', severity: '中度不一致', value: '不一致', score: -2},
-                {label: '重度', severity: '重度不一致', value: '不一致', score: -6},
+                {label: '轻度', severity: '轻度不一致', value: '不一致', score: -100},
+                {label: '中度', severity: '中度不一致', value: '不一致', score: -301},
+                {label: '重度', severity: '重度不一致', value: '不一致', score: -710},
                 {label: '不适用', severity: '', value: '不适用', score: 0}
             ];
 
@@ -814,20 +869,53 @@ APPLY_TABBED_LAYOUT = """
             }
             dim.__ar3_score = (activeIdx >= 0 ? btnDefs[activeIdx].score : 0);
 
+            // Auto score (×100 integer) from severity + a manual ±0.2 fine-tune slider.
+            // Slider has 5 ticks: +0.20 / +0.10 / 0 / -0.10 / -0.20 (default middle = 0).
+            var _ar3_adj_steps = [20, 10, 0, -10, -20];
+            dim.__ar3_autoScore = dim.__ar3_score;
+            dim.__ar3_adjIdx = 2;
+
+            var sliderWrap = document.createElement('div');
+            sliderWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+            var slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = '0'; slider.max = '4'; slider.step = '1'; slider.value = '2';
+            slider.className = '__ar3_dim_slider';
+            slider.title = '微调本项评分（+0.2 / +0.1 / 0 / -0.1 / -0.2）';
+            slider.style.cssText = 'width:78px;accent-color:#e94560;cursor:pointer;';
+            var adjLabel = document.createElement('span');
+            adjLabel.style.cssText = 'font-size:11px;color:#e94560;font-weight:bold;min-width:78px;text-align:right;white-space:nowrap;';
+
+            var _ar3_apply_adj = function() {
+                dim.__ar3_adjIdx = parseInt(slider.value, 10);
+                var adj = _ar3_adj_steps[dim.__ar3_adjIdx] || 0;
+                dim.__ar3_score = dim.__ar3_autoScore + adj;
+                var adjTxt = (adj > 0 ? '+' : '') + (adj / 100).toFixed(2);
+                adjLabel.textContent = adjTxt + '→' + (dim.__ar3_score / 100).toFixed(2);
+                _ar3_update_score();
+            };
+            slider.addEventListener('input', _ar3_apply_adj);
+            sliderWrap.appendChild(slider);
+            sliderWrap.appendChild(adjLabel);
+            dimHeader.appendChild(sliderWrap);
+            _ar3_apply_adj();
+
             var dimIdx = -1;
             (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
 
-            // Fill taA/taB from AI results. emptyOnly: keep existing text; skipHidden:
-            // only act when the reason box is visible (used by auto-fill on tab switch).
+            // Fill taA/taB from the AI comparison result (nested per-dimension object
+            // with 参考图/生成图 fields). emptyOnly: keep existing text; skipHidden: only
+            // act when the reason box is visible (used by auto-fill on tab switch).
             var _ar3_fill_from_ai = function(emptyOnly, skipHidden) {
                 if (skipHidden && reasonBox.style.display === 'none') return false;
                 var key = _ar3_ai_order[dimIdx];
                 if (!key) return false;
-                var aiRef = _ar3_get_ai('__ar3_ai_ref');
-                var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + letter);
+                var cmp = _ar3_get_ai('__ar3_ai_cmp_' + letter);
+                var obj = cmp ? cmp[key] : null;
+                if (!obj || typeof obj !== 'object') return false;
                 var did = false;
-                if (aiRef && aiRef[key] != null && (!emptyOnly || !taA.value)) { taA.value = aiRef[key]; did = true; }
-                if (aiMod && aiMod[key] != null && (!emptyOnly || !taB.value)) { taB.value = aiMod[key]; did = true; }
+                if (obj['参考图'] != null && (!emptyOnly || !taA.value)) { taA.value = obj['参考图']; did = true; }
+                if (obj['生成图'] != null && (!emptyOnly || !taB.value)) { taB.value = obj['生成图']; did = true; }
                 if (did) dim.__ar3_dirty = true;
                 return did;
             };
@@ -840,8 +928,9 @@ APPLY_TABBED_LAYOUT = """
                 activeIdx = idx;
                 var def = btnDefs[idx];
                 reasonBox.setAttribute('data-severity', def.severity);
-                dim.__ar3_score = def.score;
-                _ar3_update_score();
+                dim.__ar3_autoScore = def.score;
+                dim.__ar3_adjIdx = 2;
+                if (slider) { slider.value = '2'; _ar3_apply_adj(); } else { dim.__ar3_score = def.score; _ar3_update_score(); }
 
                 // Update original checkboxes — search by label prefix
                 var allMS = document.querySelectorAll('.multiple-select');
@@ -926,9 +1015,9 @@ APPLY_TABBED_LAYOUT = """
                 };
                 var _fillUpdate = function() {
                     var key = _ar3_ai_order[dimIdx];
-                    var aiRef = _ar3_get_ai('__ar3_ai_ref');
-                    var aiMod = _ar3_get_ai('__ar3_ai_out_model_' + ltr);
-                    var has = (dimIdx >= 0) && ((aiRef && aiRef[key] != null) || (aiMod && aiMod[key] != null));
+                    var cmp = _ar3_get_ai('__ar3_ai_cmp_' + ltr);
+                    var obj = cmp ? cmp[key] : null;
+                    var has = (dimIdx >= 0) && obj && typeof obj === 'object' && (obj['参考图'] != null || obj['生成图'] != null);
                     fillAiBtn.style.opacity = has ? '1' : '0.5';
                 };
                 window.__ar3_fill_btns.push({update: _fillUpdate});
@@ -1123,6 +1212,8 @@ REMOVE_TABBED_LAYOUT = """
     var overlay = document.getElementById('__ar3_tab_overlay');
     if (overlay) {
         overlay.parentNode.removeChild(overlay);
+        var lb = document.getElementById('__ar3_lightbox');
+        if (lb && lb.parentNode) lb.parentNode.removeChild(lb);
         window.__ar3_tabs = null;
         window.__ar3_model_items = null;
         window.__ar3_ref_item = null;
