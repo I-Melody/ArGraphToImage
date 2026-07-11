@@ -15,7 +15,8 @@ def _load_key():
     global API_KEY
     if API_KEY is not None:
         return API_KEY
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api.log")
+    path = os.path.join(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))), "api.log")
     try:
         with open(path, "r") as f:
             API_KEY = f.read().strip()
@@ -29,10 +30,10 @@ class AiClient(QObject):
 
     _PROMPT = (
         "你将看到两张商品图片：第一张是「参考图」，第二张是「生成图」。\n"
-        "只描述图片中的商品主体，完全忽略背景、桌面、地面、光影、水印、拍摄环境等非主体元素。\n"
+        "只描述图片中的商品主体的物理属性，完全忽略背景、桌面、地面、拍摄环境、肢体等非主体元素。\n"
         "只描述你实际看到的客观事实性内容（形状、结构、颜色、材质、文字、图案等），"
-        "使用具体、可核对的描述；不要做任何主观判断、评价、优劣比较或推测（如"
-        "「更好」「更精致」「可能是」「像是」等表述一律不要出现）。\n"
+        "使用具体、可核对的描述；不要做任何主观判断、评价、优劣比较或推测。"
+        "只聚焦于两图主体中有差异的部分。描述要详细，要包含细节。因光线造成的颜色差异要被描述。\n"
         "请从以下5个维度详细对比两张图主体的差异之处，返回严格的JSON（不要markdown代码块，纯JSON）。\n"
         "每个维度对应一个对象，含三个字符串字段：\"参考图\"（该维度下参考图主体的客观描述）、"
         "\"生成图\"（该维度下生成图主体的客观描述）、\"差异\"（两者在客观事实上的具体不同，"
@@ -50,7 +51,8 @@ class AiClient(QObject):
 
     def compare(self, request_id, ref_src, model_src):
         import threading
-        t = threading.Thread(target=self._run, args=(request_id, ref_src, model_src), daemon=True)
+        t = threading.Thread(target=self._run, args=(
+            request_id, ref_src, model_src), daemon=True)
         t.start()
 
     def _run(self, request_id, ref_src, model_src):
@@ -80,7 +82,8 @@ class AiClient(QObject):
             self._image_part(model_src),
         ]
 
-        body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": content}]})
+        body = json.dumps({"model": MODEL, "messages": [
+                          {"role": "user", "content": content}]})
         req = urllib.request.Request(_BASE, data=body.encode("utf-8"))
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + key)
@@ -88,7 +91,8 @@ class AiClient(QObject):
             resp = urllib.request.urlopen(req, timeout=120)
             raw = resp.read().decode("utf-8")
             data = json.loads(raw)
-            msg = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            msg = data.get("choices", [{}])[0].get(
+                "message", {}).get("content", "")
             return self._extract_json(msg)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)

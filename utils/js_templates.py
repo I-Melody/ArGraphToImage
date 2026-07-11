@@ -997,31 +997,34 @@ APPLY_TABBED_LAYOUT = """
             inputsCol.appendChild(fieldRowA);
             inputsCol.appendChild(fieldRowB);
 
-            // ---- 填充AI button: fills taA/taB from the AI results ----
-            var fillAiBtn = document.createElement('button');
-            fillAiBtn.textContent = '填充AI';
-            fillAiBtn.title = '将AI识别结果填入输入框';
-            fillAiBtn.style.cssText = 'flex-shrink:0;align-self:flex-start;background:#1a1a2e;color:#5c7cfa;border:1px solid #5c7cfa;border-radius:4px;padding:5px 8px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;white-space:nowrap;';
+            // ---- 推送 button: push THIS dimension's 参考图 text into the same
+            // dimension's EMPTY 参考图 box in every other tab (model). ----
+            var pushBtn = document.createElement('button');
+            pushBtn.textContent = '推送';
+            pushBtn.title = '把本项参考图文本推送到其它标签中为空的对应参考图输入框';
+            pushBtn.style.cssText = 'flex-shrink:0;align-self:flex-start;background:#1a1a2e;color:#5c7cfa;border:1px solid #5c7cfa;border-radius:4px;padding:5px 8px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;white-space:nowrap;';
             (function(ltr) {
-                fillAiBtn.onclick = function() {
-                    var did = _ar3_fill_from_ai(false, false);
-                    if (!did) {
-                        fillAiBtn.textContent = '无AI数据';
-                        setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1200);
+                pushBtn.onclick = function() {
+                    var text = taA.value;
+                    if (!text) {
+                        pushBtn.textContent = '无内容';
+                        setTimeout(function() { pushBtn.textContent = '推送'; }, 1200);
                         return;
                     }
-                    fillAiBtn.textContent = '已填充';
-                    setTimeout(function() { fillAiBtn.textContent = '填充AI'; }, 1000);
+                    var count = 0;
+                    Object.keys(evalByModel).forEach(function(otherL) {
+                        if (otherL === ltr) return;
+                        (evalByModel[otherL] || []).forEach(function(other) {
+                            var mm = (other.__ar3_dimPrefix || '').match(/(\\d+)$/);
+                            if (mm && parseInt(mm[1], 10) === dimIdx && other.__ar3_reasonInfo) {
+                                var ta = other.__ar3_reasonInfo.taA;
+                                if (ta && !ta.value) { ta.value = text; other.__ar3_dirty = true; count++; }
+                            }
+                        });
+                    });
+                    pushBtn.textContent = '已推送(' + count + ')';
+                    setTimeout(function() { pushBtn.textContent = '推送'; }, 1000);
                 };
-                var _fillUpdate = function() {
-                    var key = _ar3_ai_order[dimIdx];
-                    var cmp = _ar3_get_ai('__ar3_ai_cmp_' + ltr);
-                    var obj = cmp ? cmp[key] : null;
-                    var has = (dimIdx >= 0) && obj && typeof obj === 'object' && (obj['参考图'] != null || obj['生成图'] != null);
-                    fillAiBtn.style.opacity = has ? '1' : '0.5';
-                };
-                window.__ar3_fill_btns.push({update: _fillUpdate});
-                _fillUpdate();
             })(letter);
 
 
@@ -1040,7 +1043,7 @@ APPLY_TABBED_LAYOUT = """
 
             var inputsWrap = document.createElement('div');
             inputsWrap.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
-            inputsWrap.appendChild(fillAiBtn);
+            inputsWrap.appendChild(pushBtn);
             inputsWrap.appendChild(inputsCol);
             inputsWrap.appendChild(confirmBtn);
 
