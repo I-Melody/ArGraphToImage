@@ -313,6 +313,21 @@ APPLY_TABBED_LAYOUT = """
 
     var modelScores = {};
 
+    // Shared per-dimension scale multiplier (by dimension index 0..4). Changing the
+    // slider on any tab applies the same multiplier to that dimension across ALL tabs.
+    var _ar3_adj_mults = [0.1, 0.5, 1, 2, 10];
+    var _ar3_dim_scale_idx = [2, 2, 2, 2, 2];
+    var _ar3_dim_scale_listeners = [[], [], [], [], []];
+    var _ar3_broadcasting_scale = false;
+    var _ar3_set_dim_scale = function(dimIdx, sliderIdx) {
+        if (dimIdx < 0 || dimIdx > 4) return;
+        _ar3_dim_scale_idx[dimIdx] = sliderIdx;
+        if (_ar3_broadcasting_scale) return;
+        _ar3_broadcasting_scale = true;
+        _ar3_dim_scale_listeners[dimIdx].forEach(function(fn) { fn(sliderIdx); });
+        _ar3_broadcasting_scale = false;
+    };
+
     // Lightbox — remove any stale one from a previous APPLY so we never end up with
     // duplicate #__ar3_lightbox nodes (which caused a black screen with no image).
     var _oldLb = document.getElementById('__ar3_lightbox');
@@ -325,16 +340,21 @@ APPLY_TABBED_LAYOUT = """
     lightboxImg.id = '__ar3_lightbox_img';
     lightboxImg.style.cssText = 'max-width:95%;max-height:95%;object-fit:contain;border-radius:6px;box-shadow:0 0 40px rgba(0,0,0,0.6);transform-origin:center center;cursor:grab;';
     lightbox.appendChild(lightboxImg);
-    // Click background to close; clicking the image itself does not close (so you can zoom).
+    // Click background to close; clicking the image itself does not close (so you can zoom/drag).
     lightbox.onclick = function() { lightbox.style.display = 'none'; };
     lightboxImg.onclick = function(e) { e.stopPropagation(); };
     document.body.appendChild(lightbox);
 
-    var _ar3_lb_scale = 1;
+    var _ar3_lb_scale = 1, _ar3_lb_tx = 0, _ar3_lb_ty = 0;
+    var _ar3_lb_dragging = false, _ar3_lb_startX = 0, _ar3_lb_startY = 0;
+    function _ar3_lb_apply() {
+        lightboxImg.style.transform = 'translate(' + _ar3_lb_tx + 'px,' + _ar3_lb_ty + 'px) scale(' + _ar3_lb_scale + ')';
+    }
+    function closeLightbox() { lightbox.style.display = 'none'; }
     function showLightbox(src) {
         lightboxImg.src = src;
-        _ar3_lb_scale = 1;
-        lightboxImg.style.transform = 'scale(1)';
+        _ar3_lb_scale = 1; _ar3_lb_tx = 0; _ar3_lb_ty = 0;
+        _ar3_lb_apply();
         lightbox.style.display = 'flex';
     }
     // Scroll wheel zooms the enlarged image.
@@ -343,8 +363,33 @@ APPLY_TABBED_LAYOUT = """
         _ar3_lb_scale *= (e.deltaY < 0 ? 1.15 : 1 / 1.15);
         if (_ar3_lb_scale < 0.2) _ar3_lb_scale = 0.2;
         if (_ar3_lb_scale > 12) _ar3_lb_scale = 12;
-        lightboxImg.style.transform = 'scale(' + _ar3_lb_scale + ')';
+        _ar3_lb_apply();
     }, {passive: false});
+    // Drag to pan the enlarged image. mousedown on the image starts a drag; the
+    // background click-to-close is suppressed while/after dragging.
+    lightboxImg.addEventListener('mousedown', function(e) {
+        e.preventDefault(); e.stopPropagation();
+        _ar3_lb_dragging = true;
+        _ar3_lb_startX = e.clientX - _ar3_lb_tx;
+        _ar3_lb_startY = e.clientY - _ar3_lb_ty;
+        lightboxImg.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mousemove', function(e) {
+        if (!_ar3_lb_dragging) return;
+        _ar3_lb_tx = e.clientX - _ar3_lb_startX;
+        _ar3_lb_ty = e.clientY - _ar3_lb_startY;
+        _ar3_lb_apply();
+    });
+    window.addEventListener('mouseup', function() {
+        if (_ar3_lb_dragging) { _ar3_lb_dragging = false; lightboxImg.style.cursor = 'grab'; }
+    });
+    // ESC exits the enlarged view.
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && lightbox.style.display !== 'none') {
+            e.preventDefault(); e.stopPropagation();
+            closeLightbox();
+        }
+    }, true);
 
     // ---- AI compare: one button per tab uploads BOTH 参考图 + 模型图 and asks the
     // model to describe their per-dimension DIFFERENCES. Python drains
@@ -694,18 +739,65 @@ APPLY_TABBED_LAYOUT = """
         var rightSide = document.createElement('div');
         rightSide.style.cssText = 'flex:1;min-width:0;padding:10px 14px;overflow-y:auto;background:#12122a;';
         var evalHeader = document.createElement('div');
-        evalHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2a2a4a;';
+        evalHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2a2a4a;';
         var evalTitle = document.createElement('div');
         evalTitle.textContent = '评价 - 模型' + letter;
-        evalTitle.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:bold;';
+        evalTitle.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:bold;flex-shrink:0;';
+
+        var progressLabel = document.createElement('div');
+        progressLabel.className = '__ar3_progress_label';
+        progressLabel.style.cssText = 'font-size:12px;color:#a0a0b0;white-space:nowrap;';
+
+        var headerRight = document.createElement('div');
+        headerRight.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
+
+        // Tab-level submit button (left of the score badge) — writes EVERY dimension
+        // of this model into the original page in one click (replaces per-dim 确定).
+        var submitBtn = document.createElement('button');
+        submitBtn.className = '__ar3_submit_btn';
+        submitBtn.textContent = '提交本页';
+        submitBtn.title = '将本模型所有维度的内容一次性填入原页面 (Ctrl+Enter)';
+        submitBtn.style.cssText = 'background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;white-space:nowrap;';
+
         var scoreBadge = document.createElement('div');
         scoreBadge.className = '__ar3_score_badge';
         scoreBadge.style.cssText = 'font-size:13px;font-weight:bold;color:#e94560;background:#3a1a2e;border:1px solid #e94560;border-radius:4px;padding:3px 10px;white-space:nowrap;';
+        headerRight.appendChild(submitBtn);
+        headerRight.appendChild(scoreBadge);
         evalHeader.appendChild(evalTitle);
-        evalHeader.appendChild(scoreBadge);
+        evalHeader.appendChild(progressLabel);
+        evalHeader.appendChild(headerRight);
         rightSide.appendChild(evalHeader);
 
         var dims = evalByModel[letter] || [];
+
+        // A dimension counts as "done" once a severity is selected; if it is 不一致
+        // it also needs both 参考图/生成图 descriptions filled.
+        var _ar3_dim_done = function(d) {
+            if (!d.__ar3_reasonInfo) return false;
+            var idx = d.__ar3_reasonInfo.getActiveIdx ? d.__ar3_reasonInfo.getActiveIdx() : -1;
+            if (idx < 0) return false;
+            var def = d.__ar3_reasonInfo.btnDefs[idx];
+            if (def && def.value === '不一致') {
+                return !!(d.__ar3_reasonInfo.taA.value.trim() && d.__ar3_reasonInfo.taB.value.trim());
+            }
+            return true;
+        };
+
+        var _ar3_update_progress = function() {
+            var done = 0;
+            dims.forEach(function(d) { if (_ar3_dim_done(d)) done++; });
+            var total = dims.length;
+            progressLabel.textContent = '已填 ' + done + '/' + total;
+            progressLabel.style.color = (done === total && total > 0) ? '#0e9a4a' : '#e0a030';
+            if (tabs[letter] && tabs[letter].btn) {
+                var b = tabs[letter].btn;
+                var mark = (total > 0 && done === total) ? ' ✓' : ' (' + done + '/' + total + ')';
+                b.textContent = '模型' + letter + mark;
+            }
+            return {done: done, total: total};
+        };
+
         var _ar3_update_score = function() {
             var total = 0;
             dims.forEach(function(d) {
@@ -713,11 +805,30 @@ APPLY_TABBED_LAYOUT = """
             });
             scoreBadge.textContent = '评分：' + (total / 100).toFixed(2);
             modelScores[letter] = total;
+            _ar3_update_progress();
+        };
+
+        submitBtn.onclick = function() {
+            dims.forEach(function(d) {
+                if (!d.__ar3_reasonInfo || !d.__ar3_reasonInfo.submit) return;
+                d.__ar3_reasonInfo.submit();
+                d.__ar3_dirty = false;
+            });
+            var st = _ar3_update_progress();
+            if (st.done < st.total) {
+                submitBtn.textContent = '已提交(缺' + (st.total - st.done) + ')';
+                submitBtn.style.background = '#7a5a0e';
+            } else {
+                submitBtn.textContent = '已提交';
+                submitBtn.style.background = '#0e7a3a';
+            }
+            setTimeout(function() { submitBtn.textContent = '提交本页'; submitBtn.style.background = '#0f3460'; }, 1200);
         };
 
         dims.forEach(function(dim) {
             var card = document.createElement('div');
             card.className = '__ar3_dim_card';
+            dim.__ar3_card = card;
 
             var labelEl = dim.querySelector('.ivu-form-item-label, label');
             var dimLabel = labelEl ? labelEl.textContent.trim() : '';
@@ -869,39 +980,54 @@ APPLY_TABBED_LAYOUT = """
             }
             dim.__ar3_score = (activeIdx >= 0 ? btnDefs[activeIdx].score : 0);
 
-            // Auto score (×100 integer) from severity + a manual ±0.2 fine-tune slider.
-            // Slider has 5 ticks: +0.20 / +0.10 / 0 / -0.10 / -0.20 (default middle = 0).
-            var _ar3_adj_steps = [20, 10, 0, -10, -20];
+            var dimIdx = -1;
+            (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
+
+            // Auto score (×100 integer) from severity × a manual fine-tune multiplier.
+            // Slider has 5 ticks: ×0.1 / ×0.5 / ×1 / ×2 / ×10 (default middle = ×1).
+            // The product is truncated toward zero to stay an integer (×100 scheme).
+            // The chosen multiplier is SHARED across all tabs for the same dimension
+            // index via _ar3_dim_scale_idx/_ar3_set_dim_scale.
             dim.__ar3_autoScore = dim.__ar3_score;
-            dim.__ar3_adjIdx = 2;
+            var _initScaleIdx = (dimIdx >= 0 && dimIdx <= 4) ? _ar3_dim_scale_idx[dimIdx] : 2;
+            dim.__ar3_adjIdx = _initScaleIdx;
 
             var sliderWrap = document.createElement('div');
             sliderWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
             var slider = document.createElement('input');
             slider.type = 'range';
-            slider.min = '0'; slider.max = '4'; slider.step = '1'; slider.value = '2';
+            slider.min = '0'; slider.max = '4'; slider.step = '1'; slider.value = String(_initScaleIdx);
             slider.className = '__ar3_dim_slider';
-            slider.title = '微调本项评分（+0.2 / +0.1 / 0 / -0.1 / -0.2）';
+            slider.title = '微调本项评分（×0.1 / ×0.5 / ×1 / ×2 / ×10）· 同维度全标签统一';
             slider.style.cssText = 'width:78px;accent-color:#e94560;cursor:pointer;';
             var adjLabel = document.createElement('span');
             adjLabel.style.cssText = 'font-size:11px;color:#e94560;font-weight:bold;min-width:78px;text-align:right;white-space:nowrap;';
 
+            // Recompute this dim's score from its current slider index (no broadcast).
             var _ar3_apply_adj = function() {
                 dim.__ar3_adjIdx = parseInt(slider.value, 10);
-                var adj = _ar3_adj_steps[dim.__ar3_adjIdx] || 0;
-                dim.__ar3_score = dim.__ar3_autoScore + adj;
-                var adjTxt = (adj > 0 ? '+' : '') + (adj / 100).toFixed(2);
-                adjLabel.textContent = adjTxt + '→' + (dim.__ar3_score / 100).toFixed(2);
+                var mult = _ar3_adj_mults[dim.__ar3_adjIdx];
+                if (typeof mult !== 'number') mult = 1;
+                dim.__ar3_score = Math.trunc(dim.__ar3_autoScore * mult);
+                adjLabel.textContent = '×' + mult + '→' + (dim.__ar3_score / 100).toFixed(2);
                 _ar3_update_score();
             };
-            slider.addEventListener('input', _ar3_apply_adj);
+            // User dragged this slider → apply locally then broadcast to same-index dims.
+            slider.addEventListener('input', function() {
+                _ar3_apply_adj();
+                if (dimIdx >= 0 && dimIdx <= 4) _ar3_set_dim_scale(dimIdx, parseInt(slider.value, 10));
+            });
+            // Another tab changed this dimension's scale → sync our slider + score.
+            if (dimIdx >= 0 && dimIdx <= 4) {
+                _ar3_dim_scale_listeners[dimIdx].push(function(sliderIdx) {
+                    slider.value = String(sliderIdx);
+                    _ar3_apply_adj();
+                });
+            }
             sliderWrap.appendChild(slider);
             sliderWrap.appendChild(adjLabel);
             dimHeader.appendChild(sliderWrap);
             _ar3_apply_adj();
-
-            var dimIdx = -1;
-            (function() { var mm = (dim.__ar3_dimPrefix || '').match(/(\\d+)$/); if (mm) dimIdx = parseInt(mm[1], 10); })();
 
             // Fill taA/taB from the AI comparison result (nested per-dimension object
             // with 参考图/生成图 fields). emptyOnly: keep existing text; skipHidden: only
@@ -929,8 +1055,9 @@ APPLY_TABBED_LAYOUT = """
                 var def = btnDefs[idx];
                 reasonBox.setAttribute('data-severity', def.severity);
                 dim.__ar3_autoScore = def.score;
-                dim.__ar3_adjIdx = 2;
-                if (slider) { slider.value = '2'; _ar3_apply_adj(); } else { dim.__ar3_score = def.score; _ar3_update_score(); }
+                // Keep the shared per-dimension scale multiplier (do NOT reset to ×1).
+                var _keepIdx = (dimIdx >= 0 && dimIdx <= 4) ? _ar3_dim_scale_idx[dimIdx] : dim.__ar3_adjIdx;
+                if (slider) { slider.value = String(_keepIdx); _ar3_apply_adj(); } else { dim.__ar3_score = Math.trunc(def.score * (_ar3_adj_mults[_keepIdx] || 1)); _ar3_update_score(); }
 
                 // Update original checkboxes — search by label prefix
                 var allMS = document.querySelectorAll('.multiple-select');
@@ -1028,71 +1155,139 @@ APPLY_TABBED_LAYOUT = """
             })(letter);
 
 
-            var confirmBtn = document.createElement('button');
-            confirmBtn.className = '__ar3_confirm_btn';
-            confirmBtn.textContent = '确定';
-            confirmBtn.title = '将本项内容填入原页面';
-            confirmBtn.style.cssText = 'flex-shrink:0;width:56px;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
-            confirmBtn.addEventListener('click', function() {
-                _ar3_compose_reason(0, false);
-                dim.__ar3_dirty = false;
-                confirmBtn.textContent = '已填入';
-                confirmBtn.style.background = '#0e7a3a';
-                setTimeout(function() { confirmBtn.textContent = '确定'; confirmBtn.style.background = '#0f3460'; }, 1000);
-            });
-
             var inputsWrap = document.createElement('div');
             inputsWrap.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
             inputsWrap.appendChild(pushBtn);
             inputsWrap.appendChild(inputsCol);
-            inputsWrap.appendChild(confirmBtn);
 
             reasonBox.appendChild(inputsWrap);
             card.appendChild(sevRow);
             card.appendChild(reasonBox);
 
             // Typing only marks the field dirty; the original page is written
-            // ONLY when 确定 is clicked (avoids the write->observer->overwrite loop
-            // that was interrupting input).
-            taA.addEventListener('input', function() { dim.__ar3_dirty = true; });
-            taB.addEventListener('input', function() { dim.__ar3_dirty = true; });
+            // ONLY when the tab-level 提交本页 button is clicked (avoids the
+            // write->observer->overwrite loop that was interrupting input).
+            taA.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taB.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
 
             // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
             var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致');
             reasonBox.style.display = initShow ? 'block' : 'none';
 
-            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, fillFromAi: _ar3_fill_from_ai, btnDefs: btnDefs};
+            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, fillFromAi: _ar3_fill_from_ai, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
 
             rightSide.appendChild(card);
         });
 
-        _ar3_update_score();
-
         panel.appendChild(rightSide);
         tabContent.appendChild(panel);
-        tabs[letter] = {btn: tabBtn, panel: panel, refImg: ri, modelImg: mi};
+        tabs[letter] = {btn: tabBtn, panel: panel, refImg: ri, modelImg: mi, updateProgress: _ar3_update_progress, dims: dims};
+        _ar3_update_score();
     });
 
-    tabHeader.addEventListener('click', function(e) {
-        var btn = e.target.closest('button[data-model]');
-        if (!btn) return;
-        var letter = btn.getAttribute('data-model');
+    var _ar3_active_letter = modelLetters.length ? modelLetters[0] : '';
+    var _ar3_focus_dim_idx = 0;
+
+    function _ar3_highlight_focus() {
+        Object.keys(tabs).forEach(function(l) {
+            (tabs[l].dims || []).forEach(function(d) {
+                if (d.__ar3_card) d.__ar3_card.style.outline = 'none';
+            });
+        });
+        var dims = tabs[_ar3_active_letter] && tabs[_ar3_active_letter].dims || [];
+        if (_ar3_focus_dim_idx < 0) _ar3_focus_dim_idx = 0;
+        if (_ar3_focus_dim_idx >= dims.length) _ar3_focus_dim_idx = dims.length - 1;
+        var d = dims[_ar3_focus_dim_idx];
+        if (d && d.__ar3_card) {
+            d.__ar3_card.style.outline = '2px solid #5c7cfa';
+            d.__ar3_card.scrollIntoView({block: 'nearest'});
+        }
+    }
+
+    function _ar3_activate_tab(letter, keepFocus) {
+        if (!tabs[letter]) return;
         Object.keys(tabs).forEach(function(l) {
             tabs[l].btn.style.background = 'transparent';
             tabs[l].btn.style.color = '#a0a0b0';
             tabs[l].btn.style.borderBottom = '2px solid transparent';
             tabs[l].panel.style.display = 'none';
         });
+        var btn = tabs[letter].btn;
         btn.style.background = '#1a1a2e';
         btn.style.color = '#e94560';
         btn.style.borderBottom = '2px solid #e94560';
         tabs[letter].panel.style.display = 'flex';
+        _ar3_active_letter = letter;
+        if (!keepFocus) _ar3_focus_dim_idx = 0;
 
         // Auto-fill this tab's visible inputs from AI results (empty fields only)
         (evalByModel[letter] || []).forEach(function(d) {
             if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.fillFromAi) d.__ar3_reasonInfo.fillFromAi(true, true);
         });
+        _ar3_highlight_focus();
+    }
+
+    tabHeader.addEventListener('click', function(e) {
+        var btn = e.target.closest('button[data-model]');
+        if (!btn) return;
+        _ar3_activate_tab(btn.getAttribute('data-model'));
     });
+
+    // ---- Keyboard shortcuts (skip while typing in a textarea/contenteditable) ----
+    // A~H / ←→ : switch model tab | ↑↓ : move focused dimension |
+    // 1~5 : set severity of focused dimension | Ctrl+Enter : 提交本页
+    window.addEventListener('keydown', function(e) {
+        if (!document.getElementById('__ar3_tab_overlay')) return;
+        if (document.getElementById('__ar3_lightbox') &&
+            document.getElementById('__ar3_lightbox').style.display !== 'none') return;
+
+        var ae = document.activeElement;
+        var typing = ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable);
+
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            var t = tabs[_ar3_active_letter];
+            if (t && t.dims) {
+                t.dims.forEach(function(d) {
+                    if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
+                });
+                if (t.updateProgress) t.updateProgress();
+            }
+            return;
+        }
+
+        if (typing) return;
+
+        var order = modelLetters;
+        var pos = order.indexOf(_ar3_active_letter);
+        var key = e.key;
+
+        if (key === 'ArrowRight') {
+            e.preventDefault();
+            if (pos < order.length - 1) _ar3_activate_tab(order[pos + 1]);
+        } else if (key === 'ArrowLeft') {
+            e.preventDefault();
+            if (pos > 0) _ar3_activate_tab(order[pos - 1]);
+        } else if (key === 'ArrowDown') {
+            e.preventDefault();
+            _ar3_focus_dim_idx++;
+            _ar3_highlight_focus();
+        } else if (key === 'ArrowUp') {
+            e.preventDefault();
+            _ar3_focus_dim_idx--;
+            _ar3_highlight_focus();
+        } else if (/^[a-hA-H]$/.test(key)) {
+            var L = key.toUpperCase();
+            if (tabs[L]) { e.preventDefault(); _ar3_activate_tab(L); }
+        } else if (/^[1-5]$/.test(key)) {
+            e.preventDefault();
+            var dims = tabs[_ar3_active_letter] && tabs[_ar3_active_letter].dims || [];
+            var d = dims[_ar3_focus_dim_idx];
+            if (d && d.__ar3_reasonInfo && d.__ar3_reasonInfo.setActive) {
+                d.__ar3_reasonInfo.setActive(parseInt(key, 10) - 1);
+            }
+        }
+    }, true);
 
     document.body.appendChild(overlay);
 
@@ -1206,6 +1401,8 @@ APPLY_TABBED_LAYOUT = """
     window.__ar3_model_items = modelItems;
     window.__ar3_ref_item = refItem;
     window.__ar3_rank_list = rankListRow;
+
+    if (_ar3_active_letter) _ar3_highlight_focus();
 
     return JSON.stringify({status: 'transformed', count: modelLetters.length, models: modelLetters});
 })();
