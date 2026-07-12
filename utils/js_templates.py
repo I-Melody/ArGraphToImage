@@ -328,68 +328,68 @@ APPLY_TABBED_LAYOUT = """
         _ar3_broadcasting_scale = false;
     };
 
-    // Lightbox — remove any stale one from a previous APPLY so we never end up with
-    // duplicate #__ar3_lightbox nodes (which caused a black screen with no image).
-    var _oldLb = document.getElementById('__ar3_lightbox');
-    if (_oldLb && _oldLb.parentNode) _oldLb.parentNode.removeChild(_oldLb);
-
-    var lightbox = document.createElement('div');
-    lightbox.id = '__ar3_lightbox';
-    lightbox.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;background:rgba(0,0,0,0.9);cursor:zoom-out;align-items:center;justify-content:center;overflow:hidden;';
-    var lightboxImg = document.createElement('img');
-    lightboxImg.id = '__ar3_lightbox_img';
-    lightboxImg.style.cssText = 'max-width:95%;max-height:95%;object-fit:contain;border-radius:6px;box-shadow:0 0 40px rgba(0,0,0,0.6);transform-origin:center center;cursor:grab;';
-    lightbox.appendChild(lightboxImg);
-    // Click background to close; clicking the image itself does not close (so you can zoom/drag).
-    lightbox.onclick = function() { lightbox.style.display = 'none'; };
-    lightboxImg.onclick = function(e) { e.stopPropagation(); };
-    document.body.appendChild(lightbox);
-
-    var _ar3_lb_scale = 1, _ar3_lb_tx = 0, _ar3_lb_ty = 0;
-    var _ar3_lb_dragging = false, _ar3_lb_startX = 0, _ar3_lb_startY = 0;
-    function _ar3_lb_apply() {
-        lightboxImg.style.transform = 'translate(' + _ar3_lb_tx + 'px,' + _ar3_lb_ty + 'px) scale(' + _ar3_lb_scale + ')';
-    }
-    function closeLightbox() { lightbox.style.display = 'none'; }
-    function showLightbox(src) {
-        lightboxImg.src = src;
-        _ar3_lb_scale = 1; _ar3_lb_tx = 0; _ar3_lb_ty = 0;
-        _ar3_lb_apply();
-        lightbox.style.display = 'flex';
-    }
-    // Scroll wheel zooms the enlarged image.
-    lightbox.addEventListener('wheel', function(e) {
-        e.preventDefault();
-        _ar3_lb_scale *= (e.deltaY < 0 ? 1.15 : 1 / 1.15);
-        if (_ar3_lb_scale < 0.2) _ar3_lb_scale = 0.2;
-        if (_ar3_lb_scale > 12) _ar3_lb_scale = 12;
-        _ar3_lb_apply();
-    }, {passive: false});
-    // Drag to pan the enlarged image. mousedown on the image starts a drag; the
-    // background click-to-close is suppressed while/after dragging.
-    lightboxImg.addEventListener('mousedown', function(e) {
-        e.preventDefault(); e.stopPropagation();
-        _ar3_lb_dragging = true;
-        _ar3_lb_startX = e.clientX - _ar3_lb_tx;
-        _ar3_lb_startY = e.clientY - _ar3_lb_ty;
-        lightboxImg.style.cursor = 'grabbing';
-    });
-    window.addEventListener('mousemove', function(e) {
-        if (!_ar3_lb_dragging) return;
-        _ar3_lb_tx = e.clientX - _ar3_lb_startX;
-        _ar3_lb_ty = e.clientY - _ar3_lb_startY;
-        _ar3_lb_apply();
-    });
-    window.addEventListener('mouseup', function() {
-        if (_ar3_lb_dragging) { _ar3_lb_dragging = false; lightboxImg.style.cursor = 'grab'; }
-    });
-    // ESC exits the enlarged view.
-    window.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && lightbox.style.display !== 'none') {
-            e.preventDefault(); e.stopPropagation();
-            closeLightbox();
+    // Image popups — clicking an image opens it in a SEPARATE frameless, transparent
+    // OS-level window (Qt side: FramelessWindowHint + translucent bg via
+    // QWebEnginePage.createWindow). The viewer document is written by the opener: a
+    // floating image with an embedded close button and scroll-wheel zoom / drag-pan.
+    // At most one window per distinct image key (ref_image + model_A..H = up to 9); a
+    // second click on the same image focuses the existing window instead of duplicating.
+    window.__ar3_img_popups = window.__ar3_img_popups || {};
+    function showImagePopup(key, src) {
+        if (!src) return;
+        var existing = window.__ar3_img_popups[key];
+        if (existing && !existing.closed) {
+            try { existing.focus(); } catch (e) {}
+            return;
         }
-    }, true);
+        var w = window.open('', 'ar3img_' + key, 'width=900,height=700');
+        if (!w) return;
+        window.__ar3_img_popups[key] = w;
+        var doc = w.document;
+        doc.open();
+        doc.write(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>图片查看</title>' +
+            '<style>' +
+            'html,body{margin:0;height:100%;background:transparent;overflow:hidden;}' +
+            '#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:transparent;}' +
+            '#img{max-width:100%;max-height:100%;object-fit:contain;transform-origin:center center;cursor:grab;user-select:none;-webkit-user-drag:none;}' +
+            '</style></head><body>' +
+            '<div id="wrap"><img id="img" src="' + src + '" draggable="false"></div>' +
+            '<script>' +
+            '(function(){' +
+            'var img=document.getElementById("img");' +
+            'img.addEventListener("dragstart",function(e){e.preventDefault();});' +
+            'var scale=1,tx=0,ty=0;' +
+            'function apply(){img.style.transform="translate("+tx+"px,"+ty+"px) scale("+scale+")";}' +
+            // Auto-fit the window to the image so it fills the window at scale 1 (no zoom).
+            'function fit(){' +
+            'var iw=img.naturalWidth,ih=img.naturalHeight;if(!iw||!ih)return;' +
+            'var maxW=(screen.availWidth||1200)*0.9,maxH=(screen.availHeight||900)*0.9;' +
+            'var r=Math.min(maxW/iw,maxH/ih,1);var ww=Math.round(iw*r),wh=Math.round(ih*r);' +
+            'try{window.resizeTo(ww,wh);}catch(e){}' +
+            '}' +
+            'if(img.complete&&img.naturalWidth){fit();}else{img.addEventListener("load",fit);}' +
+            // Scroll-wheel zoom.
+            'window.addEventListener("wheel",function(e){e.preventDefault();scale*=(e.deltaY<0?1.15:1/1.15);' +
+            'if(scale<0.2)scale=0.2;if(scale>12)scale=12;apply();},{passive:false});' +
+            // Pan the image via pointer capture (no jitter, no lost events, no ghost-drag).
+            'var pan=false,psx=0,psy=0,ptx=0,pty=0;' +
+            'img.addEventListener("pointerdown",function(e){if(e.button!==0)return;e.preventDefault();' +
+            'pan=true;psx=e.clientX;psy=e.clientY;ptx=tx;pty=ty;img.style.cursor="grabbing";' +
+            'img.setPointerCapture(e.pointerId);});' +
+            'img.addEventListener("pointermove",function(e){if(!pan)return;' +
+            'tx=ptx+(e.clientX-psx);ty=pty+(e.clientY-psy);apply();});' +
+            'img.addEventListener("pointerup",function(e){if(!pan)return;pan=false;img.style.cursor="grab";' +
+            'try{img.releasePointerCapture(e.pointerId);}catch(err){}});' +
+            // Window move + close are handled NATIVELY on the Qt side (a drag strip +
+            // close button overlaid on top), avoiding Chromium\\u0027s window.moveTo
+            // work-area clamp. ESC still closes via window.close().
+            'window.addEventListener("keydown",function(e){if(e.key==="Escape")window.close();});' +
+            '})();' +
+            '<\\/script></body></html>'
+        );
+        doc.close();
+    }
 
     // ---- AI compare: one button per tab uploads BOTH 参考图 + 模型图 and asks the
     // model to describe their per-dimension DIFFERENCES. Python drains
@@ -500,7 +500,7 @@ APPLY_TABBED_LAYOUT = """
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '返回原页面';
     closeBtn.style.cssText = 'flex-shrink:0;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
-    closeBtn.onclick = function() { document.body.removeChild(overlay); if (lightbox.parentNode) lightbox.parentNode.removeChild(lightbox); window.__ar3_tabs = null; };
+    closeBtn.onclick = function() { if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all(); document.body.removeChild(overlay); window.__ar3_tabs = null; };
     topBar.appendChild(closeBtn);
     overlay.appendChild(topBar);
 
@@ -682,7 +682,7 @@ APPLY_TABBED_LAYOUT = """
             var refImg = refItem.querySelector('img.img');
             ri.src = refImg ? refImg.src : '';
             ri.setAttribute('data-sync', 'ref_image');
-            ri.onclick = function(e) { e.stopPropagation(); showLightbox(ri.src); };
+            ri.onclick = function(e) { e.stopPropagation(); showImagePopup('ref_image', ri.src); };
             refBox.appendChild(ri);
         }
         refCol.appendChild(refBox);
@@ -725,7 +725,7 @@ APPLY_TABBED_LAYOUT = """
             var modelImg = currentModelItem.querySelector('img.img');
             mi.src = modelImg ? modelImg.src : '';
             mi.setAttribute('data-sync', 'model_' + letter);
-            mi.onclick = function(e) { e.stopPropagation(); showLightbox(mi.src); };
+            mi.onclick = (function(ltr) { return function(e) { e.stopPropagation(); showImagePopup('model_' + ltr, mi.src); }; })(letter);
             modelBox.appendChild(mi);
         }
         modelCol.appendChild(modelBox);
@@ -790,10 +790,14 @@ APPLY_TABBED_LAYOUT = """
             var total = dims.length;
             progressLabel.textContent = '已填 ' + done + '/' + total;
             progressLabel.style.color = (done === total && total > 0) ? '#0e9a4a' : '#e0a030';
-            if (tabs[letter] && tabs[letter].btn) {
-                var b = tabs[letter].btn;
-                var mark = (total > 0 && done === total) ? ' ✓' : ' (' + done + '/' + total + ')';
-                b.textContent = '模型' + letter + mark;
+            if (tabs[letter]) {
+                tabs[letter].incomplete = (total > 0 && done < total);
+                if (tabs[letter].btn) {
+                    var b = tabs[letter].btn;
+                    var mark = (total > 0 && done === total) ? ' ✓' : ' (' + done + '/' + total + ')';
+                    b.textContent = '模型' + letter + mark;
+                }
+                if (typeof _ar3_restyle_tab === 'function') _ar3_restyle_tab(letter);
             }
             return {done: done, total: total};
         };
@@ -1188,6 +1192,28 @@ APPLY_TABBED_LAYOUT = """
     var _ar3_active_letter = modelLetters.length ? modelLetters[0] : '';
     var _ar3_focus_dim_idx = 0;
 
+    // Style a single tab button: active gets the red underline; an inactive tab with
+    // unfinished dimensions is highlighted (amber text + underline) to flag it.
+    function _ar3_restyle_tab(letter) {
+        var t = tabs[letter];
+        if (!t || !t.btn) return;
+        var active = (letter === _ar3_active_letter);
+        var incomplete = !!t.incomplete;
+        if (active) {
+            t.btn.style.background = '#1a1a2e';
+            t.btn.style.color = '#e94560';
+            t.btn.style.borderBottom = '2px solid #e94560';
+        } else if (incomplete) {
+            t.btn.style.background = 'transparent';
+            t.btn.style.color = '#e0a030';
+            t.btn.style.borderBottom = '2px solid #e0a030';
+        } else {
+            t.btn.style.background = 'transparent';
+            t.btn.style.color = '#a0a0b0';
+            t.btn.style.borderBottom = '2px solid transparent';
+        }
+    }
+
     function _ar3_highlight_focus() {
         Object.keys(tabs).forEach(function(l) {
             (tabs[l].dims || []).forEach(function(d) {
@@ -1206,18 +1232,12 @@ APPLY_TABBED_LAYOUT = """
 
     function _ar3_activate_tab(letter, keepFocus) {
         if (!tabs[letter]) return;
-        Object.keys(tabs).forEach(function(l) {
-            tabs[l].btn.style.background = 'transparent';
-            tabs[l].btn.style.color = '#a0a0b0';
-            tabs[l].btn.style.borderBottom = '2px solid transparent';
-            tabs[l].panel.style.display = 'none';
-        });
-        var btn = tabs[letter].btn;
-        btn.style.background = '#1a1a2e';
-        btn.style.color = '#e94560';
-        btn.style.borderBottom = '2px solid #e94560';
-        tabs[letter].panel.style.display = 'flex';
         _ar3_active_letter = letter;
+        Object.keys(tabs).forEach(function(l) {
+            tabs[l].panel.style.display = 'none';
+            _ar3_restyle_tab(l);
+        });
+        tabs[letter].panel.style.display = 'flex';
         if (!keepFocus) _ar3_focus_dim_idx = 0;
 
         // Auto-fill this tab's visible inputs from AI results (empty fields only)
@@ -1238,8 +1258,6 @@ APPLY_TABBED_LAYOUT = """
     // 1~5 : set severity of focused dimension | Ctrl+Enter : 提交本页
     window.addEventListener('keydown', function(e) {
         if (!document.getElementById('__ar3_tab_overlay')) return;
-        if (document.getElementById('__ar3_lightbox') &&
-            document.getElementById('__ar3_lightbox').style.display !== 'none') return;
 
         var ae = document.activeElement;
         var typing = ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable);
@@ -1255,6 +1273,10 @@ APPLY_TABBED_LAYOUT = """
             }
             return;
         }
+
+        // Leave all other modifier combos (Ctrl/Cmd/Alt) to the browser so that
+        // copy (Ctrl+C) / paste (Ctrl+V) / undo (Ctrl+Z) etc. keep working.
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
 
         if (typing) return;
 
@@ -1402,7 +1424,17 @@ APPLY_TABBED_LAYOUT = """
     window.__ar3_ref_item = refItem;
     window.__ar3_rank_list = rankListRow;
 
-    if (_ar3_active_letter) _ar3_highlight_focus();
+    // Submit EVERY tab's dimensions into the original page (used on 返回原页面/解析).
+    window.__ar3_submit_all = function() {
+        Object.keys(tabs).forEach(function(l) {
+            (tabs[l].dims || []).forEach(function(d) {
+                if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
+            });
+        });
+    };
+
+    if (_ar3_active_letter) { _ar3_activate_tab(_ar3_active_letter, true); }
+    Object.keys(tabs).forEach(function(l) { _ar3_restyle_tab(l); });
 
     return JSON.stringify({status: 'transformed', count: modelLetters.length, models: modelLetters});
 })();
@@ -1411,9 +1443,10 @@ REMOVE_TABBED_LAYOUT = """
 (function() {
     var overlay = document.getElementById('__ar3_tab_overlay');
     if (overlay) {
+        if (typeof window.__ar3_submit_all === 'function') {
+            try { window.__ar3_submit_all(); } catch (e) {}
+        }
         overlay.parentNode.removeChild(overlay);
-        var lb = document.getElementById('__ar3_lightbox');
-        if (lb && lb.parentNode) lb.parentNode.removeChild(lb);
         window.__ar3_tabs = null;
         window.__ar3_model_items = null;
         window.__ar3_ref_item = null;
