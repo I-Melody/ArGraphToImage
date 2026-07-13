@@ -4,6 +4,7 @@ import base64
 import urllib.request
 import urllib.error
 from PyQt6.QtCore import QObject, pyqtSignal
+from config import manager as config
 
 API_KEY = None
 MODEL = "glm-4.6v"
@@ -11,17 +12,16 @@ MODEL = "glm-4.6v"
 _BASE = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 
+def set_key(key):
+    global API_KEY
+    API_KEY = (key or "").strip()
+
+
 def _load_key():
     global API_KEY
-    if API_KEY is not None:
+    if API_KEY:
         return API_KEY
-    path = os.path.join(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))), "api.log")
-    try:
-        with open(path, "r") as f:
-            API_KEY = f.read().strip()
-    except Exception:
-        API_KEY = ""
+    API_KEY = (config.get("api.api_key", "") or "").strip()
     return API_KEY
 
 
@@ -72,7 +72,7 @@ class AiClient(QObject):
     def _call_api(self, ref_src, model_src):
         key = _load_key()
         if not key:
-            return json.dumps({"error": "api.log 未找到或为空"}, ensure_ascii=False)
+            return json.dumps({"error": "未设置API Key（请在设置中填写）"}, ensure_ascii=False)
         if not ref_src or not model_src:
             return json.dumps({"error": "缺少参考图或模型图"}, ensure_ascii=False)
 

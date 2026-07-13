@@ -616,25 +616,60 @@ APPLY_TABBED_LAYOUT = """
         }
     };
 
-    var _ar3_do_sort = function() {
-        var scored = modelLetters.map(function(L) {
-            return {letter: L, score: (typeof modelScores[L] === 'number' ? modelScores[L] : 0)};
+    // Count dimensions marked 不一致 (轻度/中度/重度 → btnDefs value '不一致') for a model.
+    var _ar3_incons_count = function(L) {
+        var dims = evalByModel[L] || [];
+        var c = 0;
+        dims.forEach(function(d) {
+            var ri = d.__ar3_reasonInfo;
+            if (!ri || !ri.getActiveIdx) return;
+            var idx = ri.getActiveIdx();
+            var def = idx >= 0 ? ri.btnDefs[idx] : null;
+            if (def && def.value === '不一致') c++;
         });
-        scored.sort(function(a, b) { return b.score - a.score; });
+        return c;
+    };
+
+    var _ar3_do_sort = function() {
+        var scheme = window.__ar3_sort_scheme || 'score';
+        var scored = modelLetters.map(function(L) {
+            return {
+                letter: L,
+                score: (typeof modelScores[L] === 'number' ? modelScores[L] : 0),
+                incons: _ar3_incons_count(L)
+            };
+        });
+        if (scheme === 'inconsistency') {
+            // Fewer 不一致 ranks higher; ties broken by higher score.
+            scored.sort(function(a, b) {
+                if (a.incons !== b.incons) return a.incons - b.incons;
+                return b.score - a.score;
+            });
+        } else {
+            scored.sort(function(a, b) { return b.score - a.score; });
+        }
         // Dense ranking (1,1,2,3...) — matches how the original page numbers ties.
+        var _ar3_same = function(a, b) {
+            return (scheme === 'inconsistency')
+                ? (a.incons === b.incons && a.score === b.score)
+                : (a.score === b.score);
+        };
         var rankCounter = 0;
         scored.forEach(function(s, i) {
-            if (i === 0 || s.score !== scored[i - 1].score) rankCounter++;
+            if (i === 0 || !_ar3_same(s, scored[i - 1])) rankCounter++;
             s.rank = rankCounter;
         });
         rankListRow.innerHTML = '';
         scored.forEach(function(s) {
             var color = rankColors[s.rank - 1] || '#333';
+            var detail = (scheme === 'inconsistency')
+                ? ('不一致' + s.incons + ' · ' + (s.score / 100).toFixed(2) + '分')
+                : ((s.score / 100).toFixed(2) + '分');
             var slot = document.createElement('div');
             slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';';
             slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
                 '<span>模型' + s.letter + '</span>' +
-                '<span style="opacity:0.7;font-size:11px;">' + (s.score / 100).toFixed(2) + '分</span>';
+                '<span style="opacity:0.7;font-size:11px;">' + detail + '</span>';
             rankListRow.appendChild(slot);
         });
         _ar3_apply_rank_to_original(scored);

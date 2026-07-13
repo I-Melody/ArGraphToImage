@@ -14,5 +14,6 @@ DEFAULT_CONFIG = {
     "recognition": {
         "auto_restructure": True,
         "debounce_ms": 500
-    }
+    },
+    "sort_scheme": "score"
 }

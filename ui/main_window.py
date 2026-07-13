@@ -11,13 +11,15 @@ import json
 from ui.title_bar import TitleBar
 from ui.browser_panel import BrowserPanel
 from ui.assistant_panel import AssistantPanel
+from ui.settings_panel import SettingsPanel
 from core.browser_injector import BrowserInjector
 from core.layout_adjuster import LayoutAdjuster
 from core.layout_recognizer import analyze_detection
 from core.ai_client import AiClient
+from core import ai_client
 from core import event_bus
 from config import manager as config
-from utils.js_templates import DRAIN_AI_QUEUE, CAPTURE_RANK_STRUCTURE
+from utils.js_templates import DRAIN_AI_QUEUE
 
 
 EDGE_MARGIN = 5
@@ -61,6 +63,9 @@ class MainWindow(QMainWindow):
         self._injector = BrowserInjector(self.browser(), self)
         self._adjuster = LayoutAdjuster(self._injector)
         self._assistant_panel = AssistantPanel(self)
+        self._settings_panel = SettingsPanel(self)
+        self._settings_panel.api_key_changed.connect(self._on_api_key_changed)
+        self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._info_dialog = None
         self._ai_client = AiClient(self)
         self._ai_client.describe_done.connect(self._on_ai_described)
@@ -92,7 +97,6 @@ class MainWindow(QMainWindow):
         self._assistant_panel.recognize_clicked.connect(self._on_recognize_requested)
         self._assistant_panel.transform_clicked.connect(self._on_transform_requested)
         self._assistant_panel.remove_clicked.connect(self._on_remove_requested)
-        self._assistant_panel.capture_rank_clicked.connect(self._on_capture_rank)
 
         self._injector.page_detected.connect(self._on_page_detected)
         self._injector.detection_failed.connect(self._on_detection_failed)
@@ -169,28 +173,6 @@ class MainWindow(QMainWindow):
     def _on_remove_requested(self):
         self._adjuster.remove_layout()
 
-    def _on_capture_rank(self):
-        self._status_bar.showMessage("正在抓取排序结构...")
-        def callback(payload):
-            if not payload:
-                self._assistant_panel.log("[捕获] 无返回数据 (overlay未打开?)")
-                self._status_bar.showMessage("排序抓取失败")
-                return
-            try:
-                data = json.loads(payload)
-            except (json.JSONDecodeError, TypeError):
-                self._assistant_panel.log("[捕获] JSON解析失败: " + str(payload)[:100])
-                self._status_bar.showMessage("排序抓取失败")
-                return
-            pretty = json.dumps(data, ensure_ascii=False, indent=2)
-            self._assistant_panel.log("[捕获排序结构]\n" + pretty)
-            self._status_bar.showMessage("排序结构已抓取, 见信息面板")
-            # Also save to disk for offline analysis
-            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rank_snapshot.json")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(pretty)
-        self.browser().page().runJavaScript(CAPTURE_RANK_STRUCTURE, callback)
-
     def _on_content_changed(self, payload):
         changes = payload.get("changes", []) if isinstance(payload, dict) else []
         if changes:
@@ -205,14 +187,26 @@ class MainWindow(QMainWindow):
         if self._info_dialog is None:
             dlg = QDialog(self)
             dlg.setWindowTitle("识别信息")
-            dlg.resize(340, 640)
-            lay = QVBoxLayout(dlg)
+            dlg.resize(620, 640)
+            lay = QHBoxLayout(dlg)
             lay.setContentsMargins(0, 0, 0, 0)
-            lay.addWidget(self._assistant_panel)
+            lay.setSpacing(0)
+            lay.addWidget(self._assistant_panel, 1)
+            lay.addWidget(self._settings_panel)
             self._info_dialog = dlg
         self._info_dialog.show()
         self._info_dialog.raise_()
         self._info_dialog.activateWindow()
+
+    def _on_api_key_changed(self, key):
+        ai_client.set_key(key)
+        self._status_bar.showMessage("API Key 已更新")
+
+    def _on_sort_scheme_changed(self, scheme):
+        js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
+        self.browser().page().runJavaScript(js)
+        self._status_bar.showMessage(
+            "排序方案：总分优先" if scheme == "score" else "排序方案：不一致数量优先")
 
     def _on_parse_clicked(self):
         self.browser().page().runJavaScript(
@@ -264,6 +258,9 @@ class MainWindow(QMainWindow):
             return
         event_bus.layout_restructured.emit(result)
         if result.get("status") == "transformed":
+            scheme = config.get("sort_scheme", "score")
+            self.browser().page().runJavaScript(
+                f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
             self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
         elif result.get("status") == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")

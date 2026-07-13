@@ -35,20 +35,23 @@ class ImagePopupWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view)
 
+        # Overlay widgets must be children of the view: QWebEngineView paints on a
+        # native surface that covers sibling widgets, so overlays parented to the
+        # window get hidden behind it. Parenting to the view keeps them on top.
         # Native drag strip: dragging it moves the window via startSystemMove (no
         # Chromium work-area clamp, unlike window.moveTo). Leaves room for close btn.
-        self._dragbar = _DragBar(self)
+        self._dragbar = _DragBar(self.view)
         self._dragbar.setStyleSheet("background: transparent;")
         self._dragbar.setCursor(Qt.CursorShape.SizeAllCursor)
         self._dragbar.setToolTip("拖拽移动窗口")
 
-        self._close_btn = QPushButton("\u2715", self)
+        self._close_btn = QPushButton("\u2715", self.view)
         self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close_btn.setToolTip("关闭")
         self._close_btn.setStyleSheet(
-            "QPushButton{background:rgba(20,20,40,0.55);color:#fff;border:none;"
+            "QPushButton{background:rgba(40,40,70,0.5);color:#fff;border:none;"
             "border-radius:16px;font-size:16px;font-weight:bold;}"
-            "QPushButton:hover{background:rgba(233,69,96,0.9);}")
+            "QPushButton:hover{background:rgba(233,69,96,0.75);}")
         self._close_btn.clicked.connect(self.close)
 
         # JS window.close() (e.g. ESC) -> close the window.
