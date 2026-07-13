@@ -8,12 +8,17 @@
   },
   "api": {
     "base_url": "",
-    "api_key": "f18d11ffb8634d39b1bea86ffb12fa79.bX9RbvuDX1zn5gG4",
+    "api_key": "",
     "timeout": 30
   },
   "recognition": {
     "auto_restructure": true,
     "debounce_ms": 500
   },
-  "sort_scheme": "inconsistency"
+  "sort_scheme": "inconsistency",
+  "scores": {
+    "light": -50,
+    "moderate": -301,
+    "severe": -710
+  }
 }

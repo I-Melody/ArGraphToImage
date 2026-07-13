@@ -328,67 +328,14 @@ APPLY_TABBED_LAYOUT = """
         _ar3_broadcasting_scale = false;
     };
 
-    // Image popups — clicking an image opens it in a SEPARATE frameless, transparent
-    // OS-level window (Qt side: FramelessWindowHint + translucent bg via
-    // QWebEnginePage.createWindow). The viewer document is written by the opener: a
-    // floating image with an embedded close button and scroll-wheel zoom / drag-pan.
-    // At most one window per distinct image key (ref_image + model_A..H = up to 9); a
-    // second click on the same image focuses the existing window instead of duplicating.
+    // Image popups — pushed to a Python-polled queue (__ar3_popup_queue) rather than
+    // calling window.open directly, so that regular link clicks (target="_blank") stay
+    // in the same window (QWebEnginePage.createWindow returns self).
     window.__ar3_img_popups = window.__ar3_img_popups || {};
     function showImagePopup(key, src) {
         if (!src) return;
-        var existing = window.__ar3_img_popups[key];
-        if (existing && !existing.closed) {
-            try { existing.focus(); } catch (e) {}
-            return;
-        }
-        var w = window.open('', 'ar3img_' + key, 'width=900,height=700');
-        if (!w) return;
-        window.__ar3_img_popups[key] = w;
-        var doc = w.document;
-        doc.open();
-        doc.write(
-            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>图片查看</title>' +
-            '<style>' +
-            'html,body{margin:0;height:100%;background:transparent;overflow:hidden;}' +
-            '#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:transparent;}' +
-            '#img{max-width:100%;max-height:100%;object-fit:contain;transform-origin:center center;cursor:grab;user-select:none;-webkit-user-drag:none;}' +
-            '</style></head><body>' +
-            '<div id="wrap"><img id="img" src="' + src + '" draggable="false"></div>' +
-            '<script>' +
-            '(function(){' +
-            'var img=document.getElementById("img");' +
-            'img.addEventListener("dragstart",function(e){e.preventDefault();});' +
-            'var scale=1,tx=0,ty=0;' +
-            'function apply(){img.style.transform="translate("+tx+"px,"+ty+"px) scale("+scale+")";}' +
-            // Auto-fit the window to the image so it fills the window at scale 1 (no zoom).
-            'function fit(){' +
-            'var iw=img.naturalWidth,ih=img.naturalHeight;if(!iw||!ih)return;' +
-            'var maxW=(screen.availWidth||1200)*0.9,maxH=(screen.availHeight||900)*0.9;' +
-            'var r=Math.min(maxW/iw,maxH/ih,1);var ww=Math.round(iw*r),wh=Math.round(ih*r);' +
-            'try{window.resizeTo(ww,wh);}catch(e){}' +
-            '}' +
-            'if(img.complete&&img.naturalWidth){fit();}else{img.addEventListener("load",fit);}' +
-            // Scroll-wheel zoom.
-            'window.addEventListener("wheel",function(e){e.preventDefault();scale*=(e.deltaY<0?1.15:1/1.15);' +
-            'if(scale<0.2)scale=0.2;if(scale>12)scale=12;apply();},{passive:false});' +
-            // Pan the image via pointer capture (no jitter, no lost events, no ghost-drag).
-            'var pan=false,psx=0,psy=0,ptx=0,pty=0;' +
-            'img.addEventListener("pointerdown",function(e){if(e.button!==0)return;e.preventDefault();' +
-            'pan=true;psx=e.clientX;psy=e.clientY;ptx=tx;pty=ty;img.style.cursor="grabbing";' +
-            'img.setPointerCapture(e.pointerId);});' +
-            'img.addEventListener("pointermove",function(e){if(!pan)return;' +
-            'tx=ptx+(e.clientX-psx);ty=pty+(e.clientY-psy);apply();});' +
-            'img.addEventListener("pointerup",function(e){if(!pan)return;pan=false;img.style.cursor="grab";' +
-            'try{img.releasePointerCapture(e.pointerId);}catch(err){}});' +
-            // Window move + close are handled NATIVELY on the Qt side (a drag strip +
-            // close button overlaid on top), avoiding Chromium\\u0027s window.moveTo
-            // work-area clamp. ESC still closes via window.close().
-            'window.addEventListener("keydown",function(e){if(e.key==="Escape")window.close();});' +
-            '})();' +
-            '<\\/script></body></html>'
-        );
-        doc.close();
+        window.__ar3_popup_queue = window.__ar3_popup_queue || [];
+        window.__ar3_popup_queue.push(JSON.stringify({key: key, src: src}));
     }
 
     // ---- AI compare: one button per tab uploads BOTH 参考图 + 模型图 and asks the
@@ -996,11 +943,12 @@ APPLY_TABBED_LAYOUT = """
             var sevRow = document.createElement('div');
             sevRow.style.cssText = 'display:flex;gap:4px;';
 
+            var _sc = window.__ar3_scores || {};
             var btnDefs = [
                 {label: '一致', severity: '', value: '一致', score: 0},
-                {label: '轻度', severity: '轻度不一致', value: '不一致', score: -100},
-                {label: '中度', severity: '中度不一致', value: '不一致', score: -301},
-                {label: '重度', severity: '重度不一致', value: '不一致', score: -710},
+                {label: '轻度', severity: '轻度不一致', value: '不一致', score: (typeof _sc.light === 'number' ? _sc.light : -100)},
+                {label: '中度', severity: '中度不一致', value: '不一致', score: (typeof _sc.moderate === 'number' ? _sc.moderate : -301)},
+                {label: '重度', severity: '重度不一致', value: '不一致', score: (typeof _sc.severe === 'number' ? _sc.severe : -710)},
                 {label: '不适用', severity: '', value: '不适用', score: 0}
             ];
 
@@ -1093,7 +1041,12 @@ APPLY_TABBED_LAYOUT = """
                 activeIdx = idx;
                 var def = btnDefs[idx];
                 reasonBox.setAttribute('data-severity', def.severity);
-                dim.__ar3_autoScore = def.score;
+                // Read score dynamically so that settings changes take effect immediately.
+                var _sc2 = window.__ar3_scores || {};
+                var _scoreKeys = [null, 'light', 'moderate', 'severe', null];
+                var _dynamicScore = (_scoreKeys[idx] ? _sc2[_scoreKeys[idx]] : def.score);
+                if (typeof _dynamicScore !== 'number') _dynamicScore = def.score;
+                dim.__ar3_autoScore = _dynamicScore;
                 // Keep the shared per-dimension scale multiplier (do NOT reset to ×1).
                 var _keepIdx = (dimIdx >= 0 && dimIdx <= 4) ? _ar3_dim_scale_idx[dimIdx] : dim.__ar3_adjIdx;
                 if (slider) { slider.value = String(_keepIdx); _ar3_apply_adj(); } else { dim.__ar3_score = Math.trunc(def.score * (_ar3_adj_mults[_keepIdx] || 1)); _ar3_update_score(); }
@@ -1193,10 +1146,45 @@ APPLY_TABBED_LAYOUT = """
                 };
             })(letter);
 
+            // ---- 强制推送: same as 推送 but ALWAYS overwrites (even non-empty). ----
+            var forceBtn = document.createElement('button');
+            forceBtn.textContent = '强制';
+            forceBtn.title = '强制覆盖：无论是否已有内容都替换';
+            forceBtn.style.cssText = 'flex-shrink:0;align-self:flex-start;background:#3a1a2e;color:#e94560;border:1px solid #e94560;border-radius:4px;padding:5px 8px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;white-space:nowrap;';
+            (function(forceBtnRef) {
+                forceBtnRef.onclick = function() {
+                    var text = taA.value;
+                    if (!text) {
+                        forceBtnRef.textContent = '无内容';
+                        setTimeout(function() { forceBtnRef.textContent = '强制'; }, 1200);
+                        return;
+                    }
+                    var count = 0;
+                    Object.keys(evalByModel).forEach(function(otherL) {
+                        if (otherL === letter) return;
+                        (evalByModel[otherL] || []).forEach(function(other) {
+                            var mm = (other.__ar3_dimPrefix || '').match(/(\\d+)$/);
+                            if (mm && parseInt(mm[1], 10) === dimIdx && other.__ar3_reasonInfo) {
+                                var ta = other.__ar3_reasonInfo.taA;
+                                if (ta) { ta.value = text; other.__ar3_dirty = true; count++; }
+                            }
+                        });
+                    });
+                    forceBtnRef.textContent = '已覆盖(' + count + ')';
+                    setTimeout(function() { forceBtnRef.textContent = '强制'; }, 1000);
+                };
+            })(forceBtn);
+
 
             var inputsWrap = document.createElement('div');
             inputsWrap.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
-            inputsWrap.appendChild(pushBtn);
+
+            var btnCol = document.createElement('div');
+            btnCol.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex-shrink:0;';
+            btnCol.appendChild(pushBtn);
+            btnCol.appendChild(forceBtn);
+
+            inputsWrap.appendChild(btnCol);
             inputsWrap.appendChild(inputsCol);
 
             reasonBox.appendChild(inputsWrap);
@@ -1618,6 +1606,15 @@ DRAIN_AI_QUEUE = """
         var r = q.shift();
         items.push(JSON.stringify(r));
     }
+    return '[' + items.join(',') + ']';
+})();
+"""
+DRAIN_POPUP_QUEUE = """
+(function() {
+    var q = window.__ar3_popup_queue || [];
+    if (q.length === 0) return '[]';
+    var items = [];
+    while (q.length > 0) items.push(q.shift());
     return '[' + items.join(',') + ']';
 })();
 """

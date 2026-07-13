@@ -15,5 +15,5 @@ DEFAULT_CONFIG = {
         "auto_restructure": True,
         "debounce_ms": 500
     },
-    "sort_scheme": "score"
+    "sort_scheme": "inconsistency"
 }

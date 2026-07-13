@@ -94,6 +94,20 @@ def main():
     except Exception as e:
         log_message(log_path, "ERROR", "app", str(e))
         raise
+    finally:
+        _clear_webdata_cache(log_path)
+
+
+def _clear_webdata_cache(log_path):
+    import shutil
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".webdata")
+    cache_dir = os.path.join(data_dir, "cache")
+    if os.path.isdir(cache_dir):
+        try:
+            shutil.rmtree(cache_dir)
+            log_message(log_path, "INFO", "app", "Cleared .webdata/cache/")
+        except Exception as e:
+            log_message(log_path, "ERROR", "app", f"Failed to clear cache: {e}")
 
 
 if __name__ == "__main__":

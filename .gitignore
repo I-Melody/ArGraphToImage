@@ -21,3 +21,6 @@ temp/
 *.sqlite3
 .webdata/
 rank_snapshot.json
+GraphToImage.spec
+build/
+dist/

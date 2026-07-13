@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QRadioButton,
     QButtonGroup,
+    QSpinBox,
 )
 
 from config import manager as config
@@ -17,6 +18,7 @@ from config import manager as config
 class SettingsPanel(QWidget):
     api_key_changed = pyqtSignal(str)
     sort_scheme_changed = pyqtSignal(str)
+    scores_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,7 +106,24 @@ class SettingsPanel(QWidget):
         self.radio_incons = QRadioButton("不一致数量优先")
         self.radio_incons.setToolTip("按不一致维度数量从少到多排序（少者靠前，平局比总分）")
         for rb in (self.radio_score, self.radio_incons):
-            rb.setStyleSheet("QRadioButton { color: #e0e0e0; font-size: 12px; padding: 2px; }")
+            rb.setStyleSheet("""
+                QRadioButton {
+                    color: #e0e0e0; font-size: 12px; padding: 2px;
+                }
+                QRadioButton::indicator {
+                    width: 14px; height: 14px;
+                    border: 2px solid #5c7cfa;
+                    border-radius: 8px;
+                    background: #12122a;
+                }
+                QRadioButton::indicator:checked {
+                    background: #e94560;
+                    border-color: #e94560;
+                }
+                QRadioButton::indicator:hover {
+                    border-color: #a0b0ff;
+                }
+            """)
         self.sort_group_btns.addButton(self.radio_score, 0)
         self.sort_group_btns.addButton(self.radio_incons, 1)
         sort_layout.addWidget(self.radio_score)
@@ -112,6 +131,51 @@ class SettingsPanel(QWidget):
         self.sort_group_btns.buttonClicked.connect(self._on_sort_changed)
 
         layout.addWidget(sort_group)
+
+        # ---- Score settings ----
+        score_group = QGroupBox("评分设置")
+        score_group.setStyleSheet(self._group_style())
+        score_layout = QVBoxLayout(score_group)
+        score_layout.setSpacing(6)
+        score_hint = QLabel("不一致扣分（×100 整数）")
+        score_hint.setStyleSheet("color: #707080; font-size: 10px;")
+        score_layout.addWidget(score_hint)
+
+        self.score_spins = {}
+        sevs = [("轻度", "light"), ("中度", "moderate"), ("重度", "severe")]
+        for name, key in sevs:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+            lbl.setFixedWidth(36)
+            spin = QSpinBox()
+            spin.setRange(-9999, 0)
+            spin.setSingleStep(1)
+            spin.setStyleSheet("""
+                QSpinBox {
+                    background: #12122a; color: #e0e0e0;
+                    border: 1px solid #2a2a4a; border-radius: 4px;
+                    padding: 4px 6px; font-size: 12px;
+                }
+                QSpinBox:focus { border-color: #5c7cfa; }
+            """)
+            row.addWidget(lbl)
+            row.addWidget(spin)
+            row.addStretch()
+            score_layout.addLayout(row)
+            self.score_spins[key] = spin
+
+        self.btn_save_scores = QPushButton("保存分数")
+        self.btn_save_scores.setStyleSheet(self._btn_style(primary=True))
+        self.btn_save_scores.clicked.connect(self._on_save_scores)
+        score_layout.addWidget(self.btn_save_scores)
+
+        self.score_status = QLabel("")
+        self.score_status.setStyleSheet("color: #0e9a4a; font-size: 11px;")
+        score_layout.addWidget(self.score_status)
+
+        layout.addWidget(score_group)
         layout.addStretch()
 
     def _btn_style(self, primary=False):
@@ -134,11 +198,15 @@ class SettingsPanel(QWidget):
 
     def _load_from_config(self):
         self.api_input.setText(config.get("api.api_key", "") or "")
-        scheme = config.get("sort_scheme", "score")
+        scheme = config.get("sort_scheme", "inconsistency")
         if scheme == "inconsistency":
             self.radio_incons.setChecked(True)
         else:
             self.radio_score.setChecked(True)
+        scores = config.get("scores", {})
+        self.score_spins["light"].setValue(int(scores.get("light", -100)))
+        self.score_spins["moderate"].setValue(int(scores.get("moderate", -301)))
+        self.score_spins["severe"].setValue(int(scores.get("severe", -710)))
 
     def _on_toggle_show(self, checked):
         self.api_input.setEchoMode(
@@ -160,3 +228,15 @@ class SettingsPanel(QWidget):
         cfg["sort_scheme"] = scheme
         config.save(cfg)
         self.sort_scheme_changed.emit(scheme)
+
+    def _on_save_scores(self):
+        scores = {
+            "light": self.score_spins["light"].value(),
+            "moderate": self.score_spins["moderate"].value(),
+            "severe": self.score_spins["severe"].value(),
+        }
+        cfg = config.load()
+        cfg["scores"] = scores
+        config.save(cfg)
+        self.score_status.setText("已保存")
+        self.scores_changed.emit(scores)

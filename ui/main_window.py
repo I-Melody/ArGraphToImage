@@ -19,7 +19,7 @@ from core.ai_client import AiClient
 from core import ai_client
 from core import event_bus
 from config import manager as config
-from utils.js_templates import DRAIN_AI_QUEUE
+from utils.js_templates import DRAIN_AI_QUEUE, DRAIN_POPUP_QUEUE
 
 
 EDGE_MARGIN = 5
@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._settings_panel = SettingsPanel(self)
         self._settings_panel.api_key_changed.connect(self._on_api_key_changed)
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
+        self._settings_panel.scores_changed.connect(self._on_scores_changed)
         self._info_dialog = None
         self._ai_client = AiClient(self)
         self._ai_client.describe_done.connect(self._on_ai_described)
@@ -142,7 +143,9 @@ class MainWindow(QMainWindow):
         self._ai_timer.start()
 
     def _poll_ai_requests(self):
-        self.browser().page().runJavaScript(DRAIN_AI_QUEUE, self._dispatch_ai_requests)
+        page = self.browser().page()
+        page.runJavaScript(DRAIN_AI_QUEUE, self._dispatch_ai_requests)
+        page.runJavaScript(DRAIN_POPUP_QUEUE, self._dispatch_popup_requests)
 
     def _dispatch_ai_requests(self, payload):
         if not payload or payload == "[]":
@@ -157,6 +160,20 @@ class MainWindow(QMainWindow):
             model = req.get("model")
             if rid and ref and model:
                 self._ai_client.compare(rid, ref, model)
+
+    def _dispatch_popup_requests(self, payload):
+        if not payload or payload == "[]":
+            return
+        try:
+            requests = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        page = self.browser().page()
+        for req in requests:
+            key = req.get("key")
+            src = req.get("src")
+            if key and src and hasattr(page, "open_image_popup"):
+                page.open_image_popup(key, src)
 
     def _on_ai_described(self, request_id, result_json):
         js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"
@@ -208,6 +225,20 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(
             "排序方案：总分优先" if scheme == "score" else "排序方案：不一致数量优先")
 
+    def _on_scores_changed(self, scores):
+        self._inject_scores(scores)
+        self._status_bar.showMessage("评分设置已更新")
+
+    def _inject_scores(self, scores=None):
+        if scores is None:
+            scores = config.get("scores", {})
+        s = {
+            "light": scores.get("light", -100),
+            "moderate": scores.get("moderate", -301),
+            "severe": scores.get("severe", -710),
+        }
+        self.browser().page().runJavaScript(f"window.__ar3_scores = {json.dumps(s)};")
+
     def _on_parse_clicked(self):
         self.browser().page().runJavaScript(
             "!!document.getElementById('__ar3_tab_overlay')",
@@ -258,9 +289,10 @@ class MainWindow(QMainWindow):
             return
         event_bus.layout_restructured.emit(result)
         if result.get("status") == "transformed":
-            scheme = config.get("sort_scheme", "score")
+            scheme = config.get("sort_scheme", "inconsistency")
             self.browser().page().runJavaScript(
                 f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
+            self._inject_scores()
             self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
         elif result.get("status") == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")

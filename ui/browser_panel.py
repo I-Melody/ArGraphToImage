@@ -4,84 +4,18 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushB
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 
-
-class _DragBar(QWidget):
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            handle = self.window().windowHandle()
-            if handle is not None:
-                handle.startSystemMove()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-
-class ImagePopupWindow(QWidget):
-    def __init__(self, profile):
-        super().__init__()
-        self.setWindowTitle("图片查看")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
-                            | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.resize(900, 700)
-
-        self.view = QWebEngineView(self)
-        self.page = QWebEnginePage(profile, self.view)
-        self.page.setBackgroundColor(Qt.GlobalColor.transparent)
-        self.view.setPage(self.page)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.view)
-
-        # Overlay widgets must be children of the view: QWebEngineView paints on a
-        # native surface that covers sibling widgets, so overlays parented to the
-        # window get hidden behind it. Parenting to the view keeps them on top.
-        # Native drag strip: dragging it moves the window via startSystemMove (no
-        # Chromium work-area clamp, unlike window.moveTo). Leaves room for close btn.
-        self._dragbar = _DragBar(self.view)
-        self._dragbar.setStyleSheet("background: transparent;")
-        self._dragbar.setCursor(Qt.CursorShape.SizeAllCursor)
-        self._dragbar.setToolTip("拖拽移动窗口")
-
-        self._close_btn = QPushButton("\u2715", self.view)
-        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._close_btn.setToolTip("关闭")
-        self._close_btn.setStyleSheet(
-            "QPushButton{background:rgba(40,40,70,0.5);color:#fff;border:none;"
-            "border-radius:16px;font-size:16px;font-weight:bold;}"
-            "QPushButton:hover{background:rgba(233,69,96,0.75);}")
-        self._close_btn.clicked.connect(self.close)
-
-        # JS window.close() (e.g. ESC) -> close the window.
-        self.page.windowCloseRequested.connect(self.close)
-        # JS window.resizeTo (auto-fit) -> resize this window to the image ratio.
-        self.page.geometryChangeRequested.connect(self._on_geometry_requested)
-
-    def _on_geometry_requested(self, rect):
-        self.resize(rect.size())
-
-    def resizeEvent(self, event):
-        w = self.width()
-        self._dragbar.setGeometry(0, 0, max(0, w - 48), 44)
-        self._close_btn.setGeometry(w - 40, 6, 32, 32)
-        self._dragbar.raise_()
-        self._close_btn.raise_()
-        super().resizeEvent(event)
+from ui.image_viewer import ImageViewerDialog
 
 
 class ImagePopupPage(QWebEnginePage):
     def __init__(self, profile, parent=None):
         super().__init__(profile, parent)
-        self._popups = []
 
     def createWindow(self, _window_type):
-        win = ImagePopupWindow(self.profile())
-        win.destroyed.connect(lambda: self._popups.remove(win) if win in self._popups else None)
-        self._popups.append(win)
-        win.show()
-        return win.page
+        return self
+
+    def open_image_popup(self, key, src):
+        ImageViewerDialog.show_image(key, src)
 
 
 class BrowserPanel(QWidget):
