@@ -1,10 +1,13 @@
 import os
 import json
 import base64
+import logging
 import urllib.request
 import urllib.error
 from PyQt6.QtCore import QObject, pyqtSignal
 from config import manager as config
+
+_log = logging.getLogger("ai_client")
 
 API_KEY = None
 MODEL = "glm-4.6v"
@@ -51,6 +54,7 @@ class AiClient(QObject):
 
     def compare(self, request_id, ref_src, model_src):
         import threading
+        _log.info(f"AI compare requested: id={request_id}")
         t = threading.Thread(target=self._run, args=(
             request_id, ref_src, model_src), daemon=True)
         t.start()
@@ -72,8 +76,10 @@ class AiClient(QObject):
     def _call_api(self, ref_src, model_src):
         key = _load_key()
         if not key:
+            _log.warning("API key not set")
             return json.dumps({"error": "未设置API Key（请在设置中填写）"}, ensure_ascii=False)
         if not ref_src or not model_src:
+            _log.warning("Missing reference or model image")
             return json.dumps({"error": "缺少参考图或模型图"}, ensure_ascii=False)
 
         content = [
@@ -88,13 +94,16 @@ class AiClient(QObject):
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + key)
         try:
+            _log.info("Sending AI comparison request")
             resp = urllib.request.urlopen(req, timeout=120)
             raw = resp.read().decode("utf-8")
             data = json.loads(raw)
             msg = data.get("choices", [{}])[0].get(
                 "message", {}).get("content", "")
+            _log.info("AI comparison response received")
             return self._extract_json(msg)
         except Exception as e:
+            _log.error(f"AI API call failed: {e}")
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @staticmethod

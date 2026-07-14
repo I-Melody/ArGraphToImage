@@ -35,13 +35,18 @@ class BrowserInjector(QObject):
 
     def _on_page_detected(self, result_str):
         if not result_str:
+            logger.warning("Detection returned empty result")
             self.detection_failed.emit("JS执行无返回数据")
             return
         try:
             data = json.loads(result_str)
         except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Detection JSON parse failed: {e}")
             self.detection_failed.emit(f"JSON解析失败: {e}")
             return
+        models = len(data.get("model_images", []))
+        evals = len(data.get("evaluation_groups", []))
+        logger.info(f"Page detected: {models} models, {evals} eval groups, page_type={data.get('page_type')}")
         self._last_detection = data
         self.page_detected.emit(data)
 
@@ -70,11 +75,14 @@ class BrowserInjector(QObject):
 
     def _on_layout_applied(self, result_str):
         if not result_str:
+            logger.warning("Layout apply returned empty result")
             return
         try:
             result = json.loads(result_str)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Layout result JSON parse failed: {e}")
             return
+        logger.info(f"Layout apply result: {result.get('status')} (models={result.get('count', 0)})")
         self.layout_applied.emit(result)
 
     def remove_tabbed_layout(self):

@@ -36,11 +36,13 @@ Exact order or the app crashes silently:
 
 ## Cookie / login persistence
 `main.py` builds a **named, non-off-the-record** `QWebEngineProfile("Ar3Profile")` with
-`ForcePersistentCookies` + storage/cache under `./.webdata/`, then threads it
+`ForcePersistentCookies` + storage/cache under a **per-user** directory (`QStandardPaths.
+AppLocalDataLocation` → `%LOCALAPPDATA%/AnnotationAssistant/` on Windows), then threads it
 `MainWindow(profile=...) → BrowserPanel(profile=...)` where it is applied via
-`QWebEnginePage(profile, view)` + `setPage()`. Do **not** revert to
+`QWebEnginePage(profile, view)` + `setPage()`.  Do **not** revert to
 `QWebEngineProfile.defaultProfile()` — that profile is off-the-record and drops all cookies
-(logins won't persist).
+(logins won't persist).  Do **not** place `.webdata/` or any cookie storage beside the EXE —
+that leaks logins across users on shared machines.
 
 ## Architecture — how it's wired
 - Entry `main.py` → `ui/main_window.py` (control hub).

@@ -24,3 +24,4 @@ rank_snapshot.json
 GraphToImage.spec
 build/
 dist/
+debug.log

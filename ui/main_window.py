@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 
 import os
 import json
+import logging
 
 from ui.title_bar import TitleBar
 from ui.browser_panel import BrowserPanel
@@ -20,6 +21,8 @@ from core import ai_client
 from core import event_bus
 from config import manager as config
 from utils.js_templates import DRAIN_AI_QUEUE, DRAIN_POPUP_QUEUE
+
+_log = logging.getLogger("main_win")
 
 
 EDGE_MARGIN = 5
@@ -136,8 +139,10 @@ class MainWindow(QMainWindow):
     def _on_load_finished(self, ok):
         self._status_bar.showMessage("就绪" if ok else "加载失败")
         if not ok:
+            _log.warning("Page load failed")
             return
         url = self.browser().url().toString()
+        _log.info(f"Page loaded: {url}")
         event_bus.page_loaded.emit(url)
         self._injector.start_monitoring()
         self._monitor_timer.start()
@@ -155,6 +160,7 @@ class MainWindow(QMainWindow):
             requests = json.loads(payload)
         except (json.JSONDecodeError, TypeError):
             return
+        _log.info(f"Dispatching {len(requests)} AI request(s)")
         for req in requests:
             rid = req.get("id")
             ref = req.get("ref")
@@ -183,12 +189,15 @@ class MainWindow(QMainWindow):
     def _on_recognize_requested(self):
         self._auto_apply_after_detect = False
         self._status_bar.showMessage("正在识别页面...")
+        _log.info("Recognition requested (manual)")
         self._injector.detect_page_structure()
 
     def _on_transform_requested(self):
+        _log.info("Transform layout requested")
         self._adjuster.apply_tabbed_layout()
 
     def _on_remove_requested(self):
+        _log.info("Remove layout requested")
         self._adjuster.remove_layout()
 
     def _on_content_changed(self, payload):
@@ -219,16 +228,19 @@ class MainWindow(QMainWindow):
     def _on_api_key_changed(self, key):
         ai_client.set_key(key)
         self._status_bar.showMessage("API Key 已更新")
+        _log.info("API key updated")
 
     def _on_sort_scheme_changed(self, scheme):
         js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
         self.browser().page().runJavaScript(js)
         self._status_bar.showMessage(
             "排序方案：总分优先" if scheme == "score" else "排序方案：不一致数量优先")
+        _log.info(f"Sort scheme changed: {scheme}")
 
     def _on_scores_changed(self, scores):
         self._inject_scores(scores)
         self._status_bar.showMessage("评分设置已更新")
+        _log.info(f"Scores updated: {scores}")
 
     def _inject_scores(self, scores=None):
         if scores is None:
@@ -243,6 +255,7 @@ class MainWindow(QMainWindow):
     def _on_slider_changed(self, slider_cfg):
         self._inject_slider_config(slider_cfg)
         self._status_bar.showMessage("滑块设置已更新")
+        _log.info(f"Slider config updated: mode={slider_cfg.get('mode')}")
 
     def _inject_slider_config(self, slider_cfg=None):
         if slider_cfg is None:
@@ -260,18 +273,22 @@ class MainWindow(QMainWindow):
 
     def _on_parse_state_checked(self, overlay_open):
         if overlay_open:
+            _log.info("Parse toggle: removing overlay")
             self._adjuster.remove_layout()
             self._status_bar.showMessage("已返回原页面")
             return
+        _log.info("Parse toggle: detecting + applying layout")
         self._auto_apply_after_detect = True
         self._status_bar.showMessage("正在解析页面...")
         try:
             self._injector.detect_page_structure()
         except Exception as e:
+            _log.exception("Parse detection failed")
             self._status_bar.showMessage(f"解析出错: {e}")
             QMessageBox.warning(self, "解析错误", str(e))
 
     def _on_detection_failed(self, reason):
+        _log.error(f"Detection failed: {reason}")
         self._status_bar.showMessage(f"解析失败: {reason}")
         event_bus.recognition_error.emit(reason)
         if self._auto_apply_after_detect:
@@ -281,40 +298,49 @@ class MainWindow(QMainWindow):
         try:
             result = analyze_detection(data)
         except Exception as e:
+            _log.exception("Page analysis failed")
             self._status_bar.showMessage(f"分析失败: {e}")
             event_bus.recognition_error.emit(str(e))
             return
 
+        _log.info(f"Analysis result: {result.model_count} models, {result.dimension_count} dims, matched={result.matched}")
         event_bus.recognition_done.emit(result)
         self._status_bar.showMessage(f"解析完成: {result.model_count}个模型, {result.dimension_count}个维度")
 
         if self._auto_apply_after_detect and result.matched and result.model_count > 0:
+            _log.info("Auto-applying layout after detection")
             try:
                 self._adjuster.apply_tabbed_layout()
             except Exception as e:
+                _log.exception("Layout apply failed")
                 self._status_bar.showMessage(f"布局失败: {e}")
                 QMessageBox.warning(self, "布局错误", str(e))
         self._auto_apply_after_detect = False
 
     def _on_layout_applied(self, result):
         if not result or not isinstance(result, dict):
+            _log.warning("Layout applied but result is not a dict")
             self._status_bar.showMessage("布局应用失败: JS执行错误")
             QMessageBox.warning(self, "布局失败", "无法在页面中应用作业窗口布局。\n页面可能尚未完全加载。")
             return
         event_bus.layout_restructured.emit(result)
-        if result.get("status") == "transformed":
+        status = result.get("status", "unknown")
+        _log.info(f"Layout applied: status={status}, count={result.get('count', 0)}")
+        if status == "transformed":
             scheme = config.get("sort_scheme", "inconsistency")
             self.browser().page().runJavaScript(
                 f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
             self._inject_scores()
             self._inject_slider_config()
             self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
-        elif result.get("status") == "already_transformed":
+        elif status == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")
-        elif result.get("status") == "no_grid_found":
+        elif status == "no_grid_found":
+            _log.warning("No grid items found on page")
             self._status_bar.showMessage("未找到标注页面元素")
             QMessageBox.warning(self, "解析失败", "未在页面中找到标注工作区元素。\n请确认已进入标注工作页面。")
         else:
+            _log.warning(f"Unknown layout status: {status}")
             self._status_bar.showMessage("应用布局失败")
             QMessageBox.warning(self, "错误", f"应用布局失败: {result.get('status', 'unknown')}")
 

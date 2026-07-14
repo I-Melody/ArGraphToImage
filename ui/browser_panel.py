@@ -4,7 +4,11 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushB
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 
+import logging
+
 from ui.image_viewer import ImageViewerDialog
+
+_log = logging.getLogger("browser")
 
 
 class ImagePopupPage(QWebEnginePage):
@@ -163,6 +167,7 @@ class BrowserPanel(QWidget):
         self._loading = True
         self._btn_reload.setText("\u2715")
         self._btn_reload.setToolTip("停止加载")
+        _log.info("Page load started")
         self.load_started.emit()
 
     def _on_load_finished(self, ok):
@@ -171,6 +176,9 @@ class BrowserPanel(QWidget):
         self._btn_reload.setToolTip("刷新")
         if ok:
             self._url_input.setText(self._browser.url().toString())
+            _log.info("Page load finished OK")
+        else:
+            _log.warning("Page load finished with error")
         self.load_finished.emit(ok)
 
     def navigate(self, url):

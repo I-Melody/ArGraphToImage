@@ -1,4 +1,8 @@
+import logging
+
 from core.layout_recognizer import RecognitionResult
+
+_log = logging.getLogger("layout_adj")
 
 
 class LayoutAdjuster:
@@ -11,10 +15,12 @@ class LayoutAdjuster:
         return self._is_transformed
 
     def apply_tabbed_layout(self):
+        _log.info("Applying tabbed layout")
         self._injector.apply_tabbed_layout()
         self._is_transformed = True
 
     def remove_layout(self):
+        _log.info("Removing tabbed layout")
         self._injector.remove_tabbed_layout()
         self._is_transformed = False
 
