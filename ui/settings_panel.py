@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QSpinBox,
+    QDoubleSpinBox,
 )
 
 from config import manager as config
@@ -19,6 +20,7 @@ class SettingsPanel(QWidget):
     api_key_changed = pyqtSignal(str)
     sort_scheme_changed = pyqtSignal(str)
     scores_changed = pyqtSignal(dict)
+    slider_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -159,6 +161,7 @@ class SettingsPanel(QWidget):
                     padding: 4px 6px; font-size: 12px;
                 }
                 QSpinBox:focus { border-color: #5c7cfa; }
+                QSpinBox::up-button, QSpinBox::down-button { width: 0px; }
             """)
             row.addWidget(lbl)
             row.addWidget(spin)
@@ -176,6 +179,71 @@ class SettingsPanel(QWidget):
         score_layout.addWidget(self.score_status)
 
         layout.addWidget(score_group)
+
+        # ---- Slider settings ----
+        slider_group = QGroupBox("滑块设置")
+        slider_group.setStyleSheet(self._group_style())
+        slider_layout = QVBoxLayout(slider_group)
+        slider_layout.setSpacing(6)
+
+        self.slider_mode_group = QButtonGroup(self)
+        self.radio_multi = QRadioButton("乘算（×倍数，同步所有模型）")
+        self.radio_add = QRadioButton("加算（±偏移，仅当前模型）")
+        for rb in (self.radio_multi, self.radio_add):
+            rb.setStyleSheet("QRadioButton{color:#e0e0e0;font-size:12px;padding:2px;}"
+                             "QRadioButton::indicator{width:14px;height:14px;border:2px solid #5c7cfa;border-radius:8px;background:#12122a;}"
+                             "QRadioButton::indicator:checked{background:#e94560;border-color:#e94560;}")
+        self.slider_mode_group.addButton(self.radio_multi, 0)
+        self.slider_mode_group.addButton(self.radio_add, 1)
+        slider_layout.addWidget(self.radio_multi)
+        slider_layout.addWidget(self.radio_add)
+
+        self.slider_spins_multi = []
+        self.slider_spins_add = []
+
+        row_m = QHBoxLayout()
+        row_m.setSpacing(3)
+        QLabel("乘算值:").styleSheet = lambda s: "color:#a0a0b0;font-size:11px;"
+        lbl_m = QLabel("乘算值:")
+        lbl_m.setStyleSheet("color:#a0a0b0;font-size:11px;")
+        lbl_m.setFixedWidth(52)
+        row_m.addWidget(lbl_m)
+        for i in range(5):
+            sp = QDoubleSpinBox()
+            sp.setRange(0.01, 100.0)
+            sp.setSingleStep(0.01)
+            sp.setDecimals(2)
+            sp.setStyleSheet("QDoubleSpinBox{background:#12122a;color:#e0e0e0;border:1px solid #2a2a4a;border-radius:4px;padding:3px 4px;font-size:11px;} QDoubleSpinBox:focus{border-color:#5c7cfa;} QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0px;}")
+            sp.setFixedWidth(62)
+            row_m.addWidget(sp)
+            self.slider_spins_multi.append(sp)
+        slider_layout.addLayout(row_m)
+
+        row_a = QHBoxLayout()
+        row_a.setSpacing(3)
+        lbl_a = QLabel("加算值:")
+        lbl_a.setStyleSheet("color:#a0a0b0;font-size:11px;")
+        lbl_a.setFixedWidth(52)
+        row_a.addWidget(lbl_a)
+        for i in range(5):
+            sp = QSpinBox()
+            sp.setRange(-9999, 9999)
+            sp.setStyleSheet("QSpinBox{background:#12122a;color:#e0e0e0;border:1px solid #2a2a4a;border-radius:4px;padding:3px 4px;font-size:11px;} QSpinBox:focus{border-color:#5c7cfa;} QSpinBox::up-button,QSpinBox::down-button{width:0px;}")
+            sp.setFixedWidth(62)
+            row_a.addWidget(sp)
+            self.slider_spins_add.append(sp)
+        slider_layout.addLayout(row_a)
+
+        self.btn_save_slider = QPushButton("保存滑块")
+        self.btn_save_slider.setStyleSheet(self._btn_style(primary=True))
+        self.btn_save_slider.clicked.connect(self._on_save_slider)
+        slider_layout.addWidget(self.btn_save_slider)
+
+        self.slider_status = QLabel("")
+        self.slider_status.setStyleSheet("color: #0e9a4a; font-size: 11px;")
+        slider_layout.addWidget(self.slider_status)
+
+        layout.addWidget(slider_group)
         layout.addStretch()
 
     def _btn_style(self, primary=False):
@@ -207,6 +275,17 @@ class SettingsPanel(QWidget):
         self.score_spins["light"].setValue(int(scores.get("light", -100)))
         self.score_spins["moderate"].setValue(int(scores.get("moderate", -301)))
         self.score_spins["severe"].setValue(int(scores.get("severe", -710)))
+        # Slider
+        mode = config.get("slider_mode", "multi")
+        if mode == "add":
+            self.radio_add.setChecked(True)
+        else:
+            self.radio_multi.setChecked(True)
+        multi_vals = config.get("slider_multi", [0.1, 0.5, 1.0, 2.0, 10.0])
+        add_vals = config.get("slider_add", [30, 10, 0, -10, -30])
+        for i in range(5):
+            self.slider_spins_multi[i].setValue(float(multi_vals[i]) if i < len(multi_vals) else 1.0)
+            self.slider_spins_add[i].setValue(int(add_vals[i]) if i < len(add_vals) else 0)
 
     def _on_toggle_show(self, checked):
         self.api_input.setEchoMode(
@@ -240,3 +319,15 @@ class SettingsPanel(QWidget):
         config.save(cfg)
         self.score_status.setText("已保存")
         self.scores_changed.emit(scores)
+
+    def _on_save_slider(self):
+        mode = "add" if self.radio_add.isChecked() else "multi"
+        multi_vals = [s.value() for s in self.slider_spins_multi]
+        add_vals = [s.value() for s in self.slider_spins_add]
+        cfg = config.load()
+        cfg["slider_mode"] = mode
+        cfg["slider_multi"] = multi_vals
+        cfg["slider_add"] = add_vals
+        config.save(cfg)
+        self.slider_status.setText("已保存")
+        self.slider_changed.emit({"mode": mode, "multi": multi_vals, "add": add_vals})

@@ -877,9 +877,7 @@ APPLY_TABBED_LAYOUT = """
                 }
                 var original = _ar3_find_original_input(dim);
                 if (original) {
-                    // Contenteditable div driven by iView/Vue — focus + innerText +
-                    // InputEvent is needed to trigger v-model update (textContent alone
-                    // does not fire React/Vue change detection on this element type).
+                    var prevFocus = document.activeElement;
                     original.focus();
                     original.innerText = text;
                     try {
@@ -888,6 +886,9 @@ APPLY_TABBED_LAYOUT = """
                         original.dispatchEvent(new Event('input', {bubbles: true}));
                     }
                     original.dispatchEvent(new Event('blur', {bubbles: true}));
+                    if (prevFocus && prevFocus !== original && prevFocus !== document.body) {
+                        try { prevFocus.focus(); } catch(e) {}
+                    }
                 } else if (retries < 5) {
                     setTimeout(function() { _ar3_compose_reason(retries + 1, clearOnly); }, 100);
                 }
@@ -990,19 +991,36 @@ APPLY_TABBED_LAYOUT = """
             var adjLabel = document.createElement('span');
             adjLabel.style.cssText = 'font-size:11px;color:#e94560;font-weight:bold;min-width:78px;text-align:right;white-space:nowrap;';
 
-            // Recompute this dim's score from its current slider index (no broadcast).
+            // Recompute this dim's score from its current slider index. Mode-aware:
+            // 乘算 (multi) — multiply autoScore; 加算 (add) — add offset. Only multi
+            // mode broadcasts to same-index dims on other tabs.
             var _ar3_apply_adj = function() {
                 dim.__ar3_adjIdx = parseInt(slider.value, 10);
-                var mult = _ar3_adj_mults[dim.__ar3_adjIdx];
-                if (typeof mult !== 'number') mult = 1;
-                dim.__ar3_score = Math.trunc(dim.__ar3_autoScore * mult);
-                adjLabel.textContent = '×' + mult + '→' + (dim.__ar3_score / 100).toFixed(2);
+                var cfg = window.__ar3_slider_cfg || {};
+                var mode = cfg.mode || 'multi';
+                if (mode === 'add') {
+                    var adds = cfg.add || [30, 10, 0, -10, -30];
+                    var adj = (typeof adds[dim.__ar3_adjIdx] === 'number') ? adds[dim.__ar3_adjIdx] : 0;
+                    // Ensure integer type (SpinBox values are int, but serialized may be float).
+                    adj = Math.round(adj);
+                    dim.__ar3_score = dim.__ar3_autoScore + adj;
+                    var adjTxt = (adj >= 0 ? '+' : '') + (adj / 100).toFixed(2);
+                    adjLabel.textContent = adjTxt + '→' + (dim.__ar3_score / 100).toFixed(2);
+                } else {
+                    var mults = cfg.multi || [0.1, 0.5, 1, 2, 10];
+                    var mult = (typeof mults[dim.__ar3_adjIdx] === 'number') ? mults[dim.__ar3_adjIdx] : 1;
+                    dim.__ar3_score = Math.trunc(dim.__ar3_autoScore * mult);
+                    adjLabel.textContent = '×' + mult + '→' + (dim.__ar3_score / 100).toFixed(2);
+                }
                 _ar3_update_score();
             };
-            // User dragged this slider → apply locally then broadcast to same-index dims.
+            // User dragged this slider → apply locally. Only broadcast in multi mode.
             slider.addEventListener('input', function() {
                 _ar3_apply_adj();
-                if (dimIdx >= 0 && dimIdx <= 4) _ar3_set_dim_scale(dimIdx, parseInt(slider.value, 10));
+                var cfg2 = window.__ar3_slider_cfg || {};
+                if ((cfg2.mode || 'multi') === 'multi' && dimIdx >= 0 && dimIdx <= 4) {
+                    _ar3_set_dim_scale(dimIdx, parseInt(slider.value, 10));
+                }
             });
             // Another tab changed this dimension's scale → sync our slider + score.
             if (dimIdx >= 0 && dimIdx <= 4) {

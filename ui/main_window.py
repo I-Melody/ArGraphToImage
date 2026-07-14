@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self._settings_panel.api_key_changed.connect(self._on_api_key_changed)
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._settings_panel.scores_changed.connect(self._on_scores_changed)
+        self._settings_panel.slider_changed.connect(self._on_slider_changed)
         self._info_dialog = None
         self._ai_client = AiClient(self)
         self._ai_client.describe_done.connect(self._on_ai_described)
@@ -239,6 +240,19 @@ class MainWindow(QMainWindow):
         }
         self.browser().page().runJavaScript(f"window.__ar3_scores = {json.dumps(s)};")
 
+    def _on_slider_changed(self, slider_cfg):
+        self._inject_slider_config(slider_cfg)
+        self._status_bar.showMessage("滑块设置已更新")
+
+    def _inject_slider_config(self, slider_cfg=None):
+        if slider_cfg is None:
+            slider_cfg = {
+                "mode": config.get("slider_mode", "multi"),
+                "multi": config.get("slider_multi", [0.1, 0.5, 1.0, 2.0, 10.0]),
+                "add": config.get("slider_add", [30, 10, 0, -10, -30]),
+            }
+        self.browser().page().runJavaScript(f"window.__ar3_slider_cfg = {json.dumps(slider_cfg)};")
+
     def _on_parse_clicked(self):
         self.browser().page().runJavaScript(
             "!!document.getElementById('__ar3_tab_overlay')",
@@ -293,6 +307,7 @@ class MainWindow(QMainWindow):
             self.browser().page().runJavaScript(
                 f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
             self._inject_scores()
+            self._inject_slider_config()
             self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
         elif result.get("status") == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")
