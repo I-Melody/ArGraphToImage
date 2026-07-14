@@ -2,7 +2,6 @@ import sys
 import os
 import logging
 
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
 os.environ["QTWEBENGINEINSPECTOR"] = "0"
 
 from utils import log

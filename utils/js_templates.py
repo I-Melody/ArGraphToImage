@@ -1355,6 +1355,14 @@ APPLY_TABBED_LAYOUT = """
     document.body.appendChild(overlay);
 
     var syncObserver = new MutationObserver(function() {
+        if (typeof _ar3_sync_timer !== 'undefined' && _ar3_sync_timer !== null) {
+            clearTimeout(_ar3_sync_timer);
+        }
+        _ar3_sync_timer = setTimeout(_ar3_run_sync, 200);
+    });
+
+    function _ar3_run_sync() {
+        _ar3_sync_timer = null;
         if (refItem) {
             var newRefSrc = refItem.querySelector('img.img');
             var srcVal = newRefSrc ? newRefSrc.src : '';
@@ -1457,7 +1465,7 @@ APPLY_TABBED_LAYOUT = """
                 }
             });
         });
-    });
+    }
     syncObserver.observe(document.body, {subtree: true, attributes: true, characterData: true, attributeFilter: ['src']});
 
     window.__ar3_tabs = tabs;
@@ -1492,6 +1500,10 @@ REMOVE_TABBED_LAYOUT = """
         window.__ar3_model_items = null;
         window.__ar3_ref_item = null;
         window.__ar3_rank_list = null;
+        if (typeof _ar3_sync_timer !== 'undefined' && _ar3_sync_timer !== null) {
+            clearTimeout(_ar3_sync_timer);
+            _ar3_sync_timer = null;
+        }
         return 'removed';
     }
     return 'not_found';

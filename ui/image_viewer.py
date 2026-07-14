@@ -1,5 +1,5 @@
 from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QPoint, QStandardPaths
-from PyQt6.QtGui import QPixmap, QCursor
+from PyQt6.QtGui import QPixmap, QCursor, QPainter, QColor, QPolygon
 from PyQt6.QtWidgets import (
     QDialog, QLabel, QPushButton,
     QScrollArea, QWidget,
@@ -16,6 +16,35 @@ class _DragBar(QWidget):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+
+class _ResizeGrip(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(20, 20)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.setToolTip("拖拽调整窗口大小")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.window().windowHandle()
+            if handle is not None:
+                handle.startSystemResize(Qt.Edge.RightEdge | Qt.Edge.BottomEdge)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 80))
+        w, h = self.width(), self.height()
+        tri = QPolygon()
+        tri.append(QPoint(w, h - 16))
+        tri.append(QPoint(w - 16, h))
+        tri.append(QPoint(w, h))
+        p.drawPolygon(tri)
 
 
 class ImageViewerDialog(QDialog):
@@ -53,6 +82,7 @@ class ImageViewerDialog(QDialog):
         self._key = key
         self._src = src
         self._scale = 1.0
+        self._min_scale = 0.1
         self._pixmap = None
         self._nam = QNetworkAccessManager(self)
 
@@ -87,6 +117,8 @@ class ImageViewerDialog(QDialog):
             "QPushButton:hover{background:rgba(233,69,96,0.75);}")
         self._close_btn.clicked.connect(self.close)
 
+        self._resize_grip = _ResizeGrip(self)
+
         self._wheel_zoom_delta = 0
 
         # Event filter on the viewport: wheel → zoom ONLY (no scrolling); drag → pan.
@@ -103,8 +135,23 @@ class ImageViewerDialog(QDialog):
         self._scroll.setGeometry(0, 0, w, h)
         self._dragbar.setGeometry(0, 0, max(0, w - 48), 44)
         self._close_btn.setGeometry(w - 40, 6, 32, 32)
+        self._resize_grip.setGeometry(w - 20, h - 20, 20, 20)
         self._dragbar.raise_()
         self._close_btn.raise_()
+        self._resize_grip.raise_()
+
+        if self._pixmap:
+            vw = self._scroll.viewport().width()
+            vh = self._scroll.viewport().height()
+            iw, ih = self._pixmap.width(), self._pixmap.height()
+            if vw > 0 and vh > 0 and iw > 0 and ih > 0:
+                new_min = min(vw / iw, vh / ih)
+                was_fit = abs(self._scale - self._min_scale) < 0.0001
+                self._min_scale = new_min
+                if was_fit and self._scale > new_min:
+                    self._scale = new_min
+                    self._apply_scale()
+
         super().resizeEvent(event)
 
     def eventFilter(self, obj, event):
