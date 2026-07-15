@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 
 import os
+import sys
 import json
 import logging
 
@@ -20,9 +21,10 @@ from core.ai_client import AiClient
 from core import ai_client
 from core import event_bus
 from config import manager as config
-from utils.js_templates import DRAIN_AI_QUEUE, DRAIN_POPUP_QUEUE
+from utils.js_templates import POLL_QUEUES
 
 _log = logging.getLogger("main_win")
+_WORD_CONFIG_CACHE = None
 
 
 EDGE_MARGIN = 5
@@ -90,6 +92,17 @@ class MainWindow(QMainWindow):
         self._ai_timer = QTimer(self)
         self._ai_timer.setInterval(400)
         self._ai_timer.timeout.connect(self._poll_ai_requests)
+        self._ai_timer_active = False
+
+    def _ai_timer_start(self):
+        if not self._ai_timer_active:
+            self._ai_timer.start()
+            self._ai_timer_active = True
+
+    def _ai_timer_stop(self):
+        if self._ai_timer_active:
+            self._ai_timer.stop()
+            self._ai_timer_active = False
 
     def _connect_signals(self):
         self._browser_panel.title_changed.connect(self._on_page_title_changed)
@@ -147,15 +160,24 @@ class MainWindow(QMainWindow):
         event_bus.page_loaded.emit(url)
         self._injector.start_monitoring()
         self._monitor_timer.start()
-        self._ai_timer.start()
 
     def _poll_ai_requests(self):
-        page = self.browser().page()
-        page.runJavaScript(DRAIN_AI_QUEUE, self._dispatch_ai_requests)
-        page.runJavaScript(DRAIN_POPUP_QUEUE, self._dispatch_popup_requests)
-        page.runJavaScript(
-            "var v = !!window.__ar3_overlay_just_closed; window.__ar3_overlay_just_closed = false; v;",
-            self._on_overlay_close_check)
+        self.browser().page().runJavaScript(POLL_QUEUES, self._on_queues_polled)
+
+    def _on_queues_polled(self, payload):
+        if not payload or payload == "null":
+            return
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        ai_payload = data.get("ai", "[]")
+        popup_payload = data.get("popup", "[]")
+        self._dispatch_ai_requests(ai_payload)
+        self._dispatch_popup_requests(popup_payload)
+        if data.get("overlayClosed"):
+            self._browser_panel.set_url_bar_visible(True)
+            self._ai_timer_stop()
 
     def _dispatch_ai_requests(self, payload):
         if not payload or payload == "[]":
@@ -190,10 +212,6 @@ class MainWindow(QMainWindow):
         js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"
         self.browser().page().runJavaScript(js)
 
-    def _on_overlay_close_check(self, closed):
-        if closed:
-            self._browser_panel.set_url_bar_visible(True)
-
     def _on_recognize_requested(self):
         self._auto_apply_after_detect = False
         self._status_bar.showMessage("正在识别页面...")
@@ -209,6 +227,7 @@ class MainWindow(QMainWindow):
         _log.info("Remove layout requested")
         self._adjuster.remove_layout()
         self._browser_panel.set_url_bar_visible(True)
+        self._ai_timer_stop()
 
     def _on_content_changed(self, payload):
         changes = payload.get("changes", []) if isinstance(payload, dict) else []
@@ -276,19 +295,28 @@ class MainWindow(QMainWindow):
             }
         self.browser().page().runJavaScript(f"window.__ar3_slider_cfg = {json.dumps(slider_cfg)};")
 
+    def _inject_all_config(self):
+        scheme = config.get("sort_scheme", "inconsistency")
+        scores = config.get("scores", {})
+        s = {"light": scores.get("light", -100), "moderate": scores.get("moderate", -301), "severe": scores.get("severe", -710)}
+        slider = {"mode": config.get("slider_mode", "multi"), "multi": config.get("slider_multi", [0.1, 0.5, 1.0, 2.0, 10.0]), "add": config.get("slider_add", [30, 10, 0, -10, -30])}
+        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";"
+        self.browser().page().runJavaScript(js)
+
     def _inject_word_config(self):
-        import sys as _sys, os as _os
-        if getattr(_sys, 'frozen', False):
-            root = _sys._MEIPASS
-        else:
-            root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-        cfg_path = _os.path.join(root, "word.config")
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                word_cfg = json.load(f)
-        except Exception:
-            word_cfg = {}
-        self.browser().page().runJavaScript(f"window.__ar3_word_config = {json.dumps(word_cfg)};")
+        global _WORD_CONFIG_CACHE
+        if _WORD_CONFIG_CACHE is None:
+            if getattr(sys, 'frozen', False):
+                root = sys._MEIPASS
+            else:
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cfg_path = os.path.join(root, "word.config")
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    _WORD_CONFIG_CACHE = json.load(f)
+            except Exception:
+                _WORD_CONFIG_CACHE = {}
+        self.browser().page().runJavaScript(f"window.__ar3_word_config = {json.dumps(_WORD_CONFIG_CACHE)};")
         _log.info("Word config injected")
 
     def _on_parse_clicked(self):
@@ -354,11 +382,8 @@ class MainWindow(QMainWindow):
         _log.info(f"Layout applied: status={status}, count={result.get('count', 0)}")
         if status == "transformed":
             self._browser_panel.set_url_bar_visible(False)
-            scheme = config.get("sort_scheme", "inconsistency")
-            self.browser().page().runJavaScript(
-                f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
-            self._inject_scores()
-            self._inject_slider_config()
+            self._inject_all_config()
+            self._ai_timer_start()
             self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
         elif status == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")

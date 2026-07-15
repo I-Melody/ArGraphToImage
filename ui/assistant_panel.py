@@ -28,7 +28,7 @@ class AssistantPanel(QWidget):
         layout.setSpacing(8)
 
         actions_group = QGroupBox("Actions")
-        actions_group.setStyleSheet("""
+        _group_qss = """
             QGroupBox {
                 font-size: 12px;
                 font-weight: bold;
@@ -43,7 +43,8 @@ class AssistantPanel(QWidget):
                 padding: 0 4px;
                 color: #a0a0b0;
             }
-        """)
+        """
+        actions_group.setStyleSheet(_group_qss)
         actions_layout = QVBoxLayout(actions_group)
         actions_layout.setSpacing(6)
 
@@ -105,7 +106,7 @@ class AssistantPanel(QWidget):
         layout.addWidget(actions_group)
 
         info_group = QGroupBox("Recognition Results")
-        info_group.setStyleSheet(actions_group.styleSheet())
+        info_group.setStyleSheet(_group_qss)
         info_layout = QVBoxLayout(info_group)
 
         self.tree = QTreeWidget()
@@ -143,7 +144,7 @@ class AssistantPanel(QWidget):
         layout.addWidget(info_group)
 
         log_group = QGroupBox("Log")
-        log_group.setStyleSheet(actions_group.styleSheet())
+        log_group.setStyleSheet(_group_qss)
         log_layout = QVBoxLayout(log_group)
 
         self.log_output = QTextEdit()

@@ -76,22 +76,6 @@ def main():
     except Exception as e:
         _log.exception(f"App crashed: {e}")
         raise
-    finally:
-        _clear_webdata_cache()
-
-
-def _clear_webdata_cache():
-    import shutil
-    from PyQt6.QtCore import QStandardPaths
-    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    data_dir = os.path.join(app_data, "AnnotationAssistant")
-    cache_dir = os.path.join(data_dir, "cache")
-    if os.path.isdir(cache_dir):
-        try:
-            shutil.rmtree(cache_dir)
-            _log.info("Cleared webdata cache")
-        except Exception as e:
-            _log.error(f"Failed to clear cache: {e}")
 
 
 if __name__ == "__main__":

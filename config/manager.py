@@ -3,6 +3,9 @@ import os
 import sys
 from config.defaults import DEFAULT_CONFIG
 
+_CACHE = None
+_CACHE_MTIME = 0
+
 
 def _app_root():
     if getattr(sys, 'frozen', False):
@@ -22,14 +25,30 @@ def load():
     return dict(DEFAULT_CONFIG)
 
 
+def _load_cached():
+    global _CACHE, _CACHE_MTIME
+    path = _config_path()
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0
+    if _CACHE is None or mtime != _CACHE_MTIME:
+        _CACHE = load()
+        _CACHE_MTIME = mtime
+    return _CACHE
+
+
 def save(config):
+    global _CACHE, _CACHE_MTIME
     path = _config_path()
     with open(path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+    _CACHE = dict(config)
+    _CACHE_MTIME = os.path.getmtime(path)
 
 
 def get(key, default=None):
-    cfg = load()
+    cfg = _load_cached()
     keys = key.split(".")
     for k in keys:
         if isinstance(cfg, dict):

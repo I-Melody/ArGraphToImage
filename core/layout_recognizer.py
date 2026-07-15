@@ -5,6 +5,7 @@ Analyzes page detection results and produces structured findings.
 
 from dataclasses import dataclass, field
 from typing import Optional
+import re
 
 
 @dataclass
@@ -109,6 +110,5 @@ def analyze_detection(detection_data: dict) -> RecognitionResult:
 
 
 def _extract_model_letter(grid_id: str) -> str:
-    import re
     match = re.search(r'model_([A-H])', grid_id)
     return match.group(1) if match else ""

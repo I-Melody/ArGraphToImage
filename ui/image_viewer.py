@@ -1,4 +1,5 @@
-from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QPoint, QStandardPaths
+import os
+from PyQt6.QtCore import Qt, QSize, QTimer, QUrl, QEvent, QPoint, QStandardPaths
 from PyQt6.QtGui import QPixmap, QCursor, QPainter, QColor, QPolygon, QTransform
 from PyQt6.QtWidgets import (
     QDialog, QLabel, QPushButton,
@@ -56,7 +57,6 @@ class ImageViewerDialog(QDialog):
         if cls._nam is None:
             cls._nam = QNetworkAccessManager()
             cache = QNetworkDiskCache()
-            import os
             cache_dir = os.path.join(
                 QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation),
                 "ImageViewer")
@@ -86,7 +86,8 @@ class ImageViewerDialog(QDialog):
         self._pixmap = None
         self._rotation = 0
         self._mirrored = False
-        self._nam = QNetworkAccessManager(self)
+        self._resize_debounce = None
+        self._pending_apply = False
 
         self.setWindowTitle("图片查看")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint
@@ -172,16 +173,23 @@ class ImageViewerDialog(QDialog):
         self._resize_grip.raise_()
 
         if self._pixmap:
-            vw = self._scroll.viewport().width()
-            vh = self._scroll.viewport().height()
-            iw, ih = self._pixmap.width(), self._pixmap.height()
-            if vw > 0 and vh > 0 and iw > 0 and ih > 0:
-                new_min = min(vw / iw, vh / ih)
-                was_fit = abs(self._scale - self._min_scale) < 0.0001
-                self._min_scale = new_min
-                if was_fit and self._scale > new_min:
-                    self._scale = new_min
-                    self._apply_scale()
+            self._pending_apply = True
+            if self._resize_debounce is None:
+                def _delayed():
+                    if self._pending_apply:
+                        self._pending_apply = False
+                        vw = self._scroll.viewport().width()
+                        vh = self._scroll.viewport().height()
+                        iw, ih = self._pixmap.width(), self._pixmap.height()
+                        if vw > 0 and vh > 0 and iw > 0 and ih > 0:
+                            new_min = min(vw / iw, vh / ih)
+                            was_fit = abs(self._scale - self._min_scale) < 0.0001
+                            self._min_scale = new_min
+                            if was_fit and self._scale > new_min:
+                                self._scale = new_min
+                                self._apply_scale()
+                    self._resize_debounce = None
+                self._resize_debounce = QTimer.singleShot(80, _delayed)
 
         super().resizeEvent(event)
 

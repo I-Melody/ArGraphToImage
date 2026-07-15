@@ -1,9 +1,11 @@
 import os
+import re
 import json
 import base64
 import logging
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QObject, pyqtSignal
 from config import manager as config
 
@@ -31,6 +33,8 @@ def _load_key():
 class AiClient(QObject):
     describe_done = pyqtSignal(str, str)
 
+    _pool = ThreadPoolExecutor(max_workers=2)
+
     _PROMPT = (
         "你将看到两张商品图片：第一张是「参考图」，第二张是「生成图」。\n"
         "只描述图片中的商品主体的物理属性，完全忽略背景、桌面、地面、拍摄环境、肢体等非主体元素。\n"
@@ -53,11 +57,8 @@ class AiClient(QObject):
     )
 
     def compare(self, request_id, ref_src, model_src):
-        import threading
         _log.info(f"AI compare requested: id={request_id}")
-        t = threading.Thread(target=self._run, args=(
-            request_id, ref_src, model_src), daemon=True)
-        t.start()
+        self._pool.submit(self._run, request_id, ref_src, model_src)
 
     def _run(self, request_id, ref_src, model_src):
         result = self._call_api(ref_src, model_src)
@@ -108,7 +109,6 @@ class AiClient(QObject):
 
     @staticmethod
     def _extract_json(text):
-        import re
         if not text:
             return json.dumps({"raw": ""}, ensure_ascii=False)
         s = text.strip()

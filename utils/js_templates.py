@@ -150,6 +150,10 @@ DETECT_PAGE_STRUCTURE = """
 MONITOR_PAGE_CHANGES = """
 (function() {
     if (window.__annotation_monitor_active) return 'already_active';
+    if (window.__ar3_sync_observer_active) {
+        window.__annotation_monitor_active = true;
+        return 'delegated_to_sync_observer';
+    }
     window.__annotation_monitor_active = true;
 
     var observer = new MutationObserver(function(mutations) {
@@ -1149,10 +1153,17 @@ APPLY_TABBED_LAYOUT = """
             btnDefs.forEach(function(def, i) {
                 var btn = document.createElement('button');
                 btn.textContent = def.label;
+                btn.className = '__ar3_sev_btn';
+                btn.setAttribute('data-sev-idx', String(i));
                 btn.style.cssText = 'flex:1;padding:5px 4px;font-size:12px;border:1px solid ' + (i === activeIdx ? '#e94560' : '#2a2a4a') + ';border-radius:4px;background:' + (i === activeIdx ? '#3a1a2e' : '#1a1a2e') + ';color:' + (i === activeIdx ? '#e94560' : '#a0a0b0') + ';cursor:pointer;font-family:inherit;';
-                btn.addEventListener('click', function() { _ar3_set_active(i); });
                 sevRow.appendChild(btn);
                 sevBtns.push(btn);
+            });
+            card.addEventListener('click', function(e) {
+                var btn = e.target.closest('.__ar3_sev_btn');
+                if (!btn) return;
+                var idx = parseInt(btn.getAttribute('data-sev-idx'), 10);
+                if (idx >= 0) _ar3_set_active(idx);
             });
             reasonBox.setAttribute('data-severity', btnDefs[Math.max(0, activeIdx)].severity || '');
 
@@ -1436,7 +1447,42 @@ APPLY_TABBED_LAYOUT = """
 
     document.body.appendChild(overlay);
 
-    var syncObserver = new MutationObserver(function() {
+    var _ar3_sync_cache_inputs = document.querySelectorAll('.customInput.horizontalLtr');
+    var _ar3_sync_cache_ms = document.querySelectorAll('.multiple-select');
+    var syncObserver = new MutationObserver(function(mutations) {
+        var hasChildList = false;
+        var hasRelevant = false;
+        var monitorChanges = [];
+        for (var i = 0; i < mutations.length; i++) {
+            var mt = mutations[i];
+            if (mt.target && overlay.contains(mt.target)) continue;
+            hasRelevant = true;
+            if (mt.type === 'childList') {
+                hasChildList = true;
+                mt.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1 && node.classList && (node.classList.contains('grid-item') || node.classList.contains('multiple-select') || node.classList.contains('rank-list-item'))) {
+                        monitorChanges.push({type: 'added', classes: Array.from(node.classList), id: node.id || ''});
+                    }
+                });
+                mt.removedNodes.forEach(function(node) {
+                    if (node.nodeType === 1 && node.classList && (node.classList.contains('grid-item') || node.classList.contains('multiple-select') || node.classList.contains('rank-list-item'))) {
+                        monitorChanges.push({type: 'removed', classes: Array.from(node.classList), id: node.id || ''});
+                    }
+                });
+            }
+            if (mt.type === 'attributes' && (mt.attributeName === 'src' || mt.attributeName === 'checked' || mt.attributeName === 'value')) {
+                monitorChanges.push({type: 'attr_changed', id: mt.target.id || mt.target.className, attr: mt.attributeName, newValue: mt.target.getAttribute(mt.attributeName)});
+            }
+        }
+        if (monitorChanges.length > 0) {
+            window.__annotation_last_changes = JSON.stringify(monitorChanges);
+            if (!window.__annotation_monitor_active) window.__annotation_monitor_active = true;
+        }
+        if (!hasRelevant) return;
+        if (hasChildList) {
+            _ar3_sync_cache_inputs = document.querySelectorAll('.customInput.horizontalLtr');
+            _ar3_sync_cache_ms = document.querySelectorAll('.multiple-select');
+        }
         if (typeof _ar3_sync_timer !== 'undefined' && _ar3_sync_timer !== null) {
             clearTimeout(_ar3_sync_timer);
         }
@@ -1445,6 +1491,8 @@ APPLY_TABBED_LAYOUT = """
 
     function _ar3_run_sync() {
         _ar3_sync_timer = null;
+        var _syncInputs = _ar3_sync_cache_inputs;
+        var _syncMS = _ar3_sync_cache_ms;
         if (refItem) {
             var newRefSrc = refItem.querySelector('img.img');
             var srcVal = newRefSrc ? newRefSrc.src : '';
@@ -1472,7 +1520,7 @@ APPLY_TABBED_LAYOUT = """
                 // Find original CI by text marker "prefix+不一致" or "prefix+备注"
                 var prefix = dim.__ar3_dimPrefix || '';
                 if (!prefix) return;
-                var allInputs = document.querySelectorAll('.customInput.horizontalLtr');
+                var allInputs = _syncInputs;
                 var origInput = null;
                 var marker = prefix + '不一致';
                 for (var ai = 0; ai < allInputs.length; ai++) {
@@ -1503,7 +1551,7 @@ APPLY_TABBED_LAYOUT = """
                 if (dim.__ar3_dirty || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
 
                 // Find corresponding MS to read checkbox state (by label text)
-                var allMS = document.querySelectorAll('.multiple-select');
+                var allMS = _syncMS;
                 var freshDim = null;
                 for (var mi = 0; mi < allMS.length; mi++) {
                     var lbl = allMS[mi].querySelector('.ivu-form-item-label, label');
@@ -1549,7 +1597,8 @@ APPLY_TABBED_LAYOUT = """
             });
         });
     }
-    syncObserver.observe(document.body, {subtree: true, attributes: true, characterData: true, attributeFilter: ['src']});
+    syncObserver.observe(document.body, {subtree: true, attributes: true, characterData: true, childList: true, attributeFilter: ['src', 'class', 'checked', 'value']});
+    window.__ar3_sync_observer_active = true;
 
     window.__ar3_tabs = tabs;
     window.__ar3_model_items = modelItems;
@@ -1729,6 +1778,20 @@ DRAIN_POPUP_QUEUE = """
     var items = [];
     while (q.length > 0) items.push(q.shift());
     return '[' + items.join(',') + ']';
+})();
+"""
+
+POLL_QUEUES = """
+(function() {
+    var aiQ = window.__ar3_ai_queue || [];
+    var aiItems = [];
+    while (aiQ.length > 0) { var r = aiQ.shift(); aiItems.push(JSON.stringify(r)); }
+    var popQ = window.__ar3_popup_queue || [];
+    var popItems = [];
+    while (popQ.length > 0) popItems.push(popQ.shift());
+    var closed = !!window.__ar3_overlay_just_closed;
+    window.__ar3_overlay_just_closed = false;
+    return JSON.stringify({ai: '[' + aiItems.join(',') + ']', popup: '[' + popItems.join(',') + ']', overlayClosed: closed});
 })();
 """
 
