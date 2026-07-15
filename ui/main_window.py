@@ -268,8 +268,12 @@ class MainWindow(QMainWindow):
         self.browser().page().runJavaScript(f"window.__ar3_slider_cfg = {json.dumps(slider_cfg)};")
 
     def _inject_word_config(self):
-        import os as _os
-        cfg_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "word.config")
+        import sys as _sys, os as _os
+        if getattr(_sys, 'frozen', False):
+            root = _sys._MEIPASS
+        else:
+            root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        cfg_path = _os.path.join(root, "word.config")
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 word_cfg = json.load(f)

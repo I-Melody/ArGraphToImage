@@ -1,10 +1,17 @@
 import json
 import os
+import sys
 from config.defaults import DEFAULT_CONFIG
 
 
+def _app_root():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def _config_path():
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+    return os.path.join(_app_root(), "config.json")
 
 
 def load():
