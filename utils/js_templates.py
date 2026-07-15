@@ -451,15 +451,15 @@ APPLY_TABBED_LAYOUT = """
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:#1a1a2e;display:flex;flex-direction:column;font-family:"Microsoft YaHei",sans-serif;';
 
     var topBar = document.createElement('div');
-    topBar.style.cssText = 'display:flex;align-items:center;background:#16213e;border-bottom:2px solid #2a2a4a;padding:0 8px;flex-shrink:0;min-height:42px;';
+    topBar.style.cssText = 'display:flex;align-items:stretch;background:#16213e;border-bottom:2px solid #2a2a4a;padding:2px 8px;flex-shrink:0;';
     var tabHeader = document.createElement('div');
     tabHeader.id = '__ar3_tab_header';
-    tabHeader.style.cssText = 'display:flex;flex:1;overflow-x:auto;';
+    tabHeader.style.cssText = 'display:flex;flex:1;gap:4px;';
     topBar.appendChild(tabHeader);
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '返回原页面';
-    closeBtn.style.cssText = 'flex-shrink:0;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
-    closeBtn.onclick = function() { if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all(); document.body.removeChild(overlay); window.__ar3_tabs = null; };
+    closeBtn.style.cssText = 'flex-shrink:0;align-self:center;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
+    closeBtn.onclick = function() { if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all(); document.body.removeChild(overlay); window.__ar3_tabs = null; window.__ar3_overlay_just_closed = true; };
     topBar.appendChild(closeBtn);
     overlay.appendChild(topBar);
 
@@ -474,24 +474,22 @@ APPLY_TABBED_LAYOUT = """
 
     var rankCols = document.createElement('div');
     rankCols.style.cssText = 'flex:1;min-width:0;';
-    var rankTitleRow = document.createElement('div');
-    rankTitleRow.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;';
-    var labels = ['RANK 1','RANK 2','RANK 3','RANK 4','RANK 5','RANK 6','RANK 7','RANK 8'];
-    labels.forEach(function(lbl, i) {
-        var badge = document.createElement('span');
-        badge.textContent = lbl;
-        badge.style.cssText = 'flex:1;text-align:center;padding:4px 0;border-radius:4px;font-size:12px;font-weight:bold;color:#fff;background:' + (rankColors[i] || '#333') + ';';
-        rankTitleRow.appendChild(badge);
-    });
-    rankCols.appendChild(rankTitleRow);
     var rankListRow = document.createElement('div');
     rankListRow.id = '__ar3_rank_list';
     rankListRow.style.cssText = 'display:flex;gap:4px;';
     var ranks = rankListItems.length ? rankListItems : ['模型A','模型B','模型C','模型D','模型E','模型F','模型G','模型H'];
-    ranks.forEach(function(name) {
+    ranks.forEach(function(name, ri) {
+        var color = rankColors[ri] || '#333';
         var slot = document.createElement('div');
-        slot.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;gap:4px;background:#1a1a2e;border-radius:4px;padding:6px 4px;font-size:12px;color:#e0e0e0;';
-        slot.innerHTML = '<span style="transform:rotate(90deg);opacity:0.4;font-size:10px;">|||</span> ' + name;
+        slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:6px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
+        var letter = (name.match(/模型([A-H])/) || [])[1] || '';
+        slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + (ri + 1) + '</span>' +
+            '<span>' + name + '</span>';
+        slot.setAttribute('data-rank-model', letter);
+        slot.addEventListener('click', function(e) {
+            var l = (e.currentTarget.getAttribute('data-rank-model') || '').toUpperCase();
+            if (l && tabs[l]) _ar3_activate_tab(l);
+        });
         rankListRow.appendChild(slot);
     });
     rankCols.appendChild(rankListRow);
@@ -625,13 +623,19 @@ APPLY_TABBED_LAYOUT = """
                 ? ('不一致' + s.incons + ' · ' + (s.score / 100).toFixed(2) + '分')
                 : ((s.score / 100).toFixed(2) + '分');
             var slot = document.createElement('div');
-            slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';';
+            slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
             slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
                 '<span>模型' + s.letter + '</span>' +
                 '<span style="opacity:0.7;font-size:11px;">' + detail + '</span>';
+            slot.setAttribute('data-rank-model', s.letter);
+            slot.addEventListener('click', function(e) {
+                var l = (e.currentTarget.getAttribute('data-rank-model') || '').toUpperCase();
+                if (l && tabs[l]) _ar3_activate_tab(l);
+            });
             rankListRow.appendChild(slot);
         });
         _ar3_apply_rank_to_original(scored);
+        _ar3_refresh_rank_highlight();
     };
 
     var sortBtn = document.createElement('button');
@@ -653,11 +657,20 @@ APPLY_TABBED_LAYOUT = """
 
     var tabs = {};
     modelLetters.forEach(function(letter, idx) {
-        var tabBtn = document.createElement('button');
+        var tabBtn = document.createElement('div');
         tabBtn.id = '__ar3_tab_btn_' + letter;
-        tabBtn.textContent = '模型' + letter;
-        tabBtn.style.cssText = 'background:' + (idx === 0 ? '#1a1a2e' : 'transparent') + ';color:' + (idx === 0 ? '#e94560' : '#a0a0b0') + ';border:none;border-bottom:' + (idx === 0 ? '2px solid #e94560' : '2px solid transparent') + ';padding:8px 18px;cursor:pointer;font-size:13px;white-space:nowrap;';
         tabBtn.setAttribute('data-model', letter);
+        var _active_bg = '#e0a030', _active_text = '#1a1a2e';
+        tabBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:' + (idx === 0 ? _active_bg : 'transparent') + ';border:3px solid ' + (idx === 0 ? _active_bg : 'transparent') + ';padding:6px 8px;cursor:pointer;min-width:0;';
+        var tabLabel = document.createElement('span');
+        tabLabel.textContent = letter;
+        tabLabel.style.cssText = 'font-size:14px;font-weight:bold;color:' + (idx === 0 ? _active_text : '#e0a030') + ';line-height:1.2;';
+        tabBtn.appendChild(tabLabel);
+        var tabSlots = document.createElement('span');
+        tabSlots.className = '__ar3_tab_slots';
+        tabSlots.textContent = '[ , , , , ]';
+        tabSlots.style.cssText = 'font-size:12px;font-weight:bold;color:' + (idx === 0 ? _active_text : '#e0a030') + ';line-height:1.2;white-space:nowrap;';
+        tabBtn.appendChild(tabSlots);
         tabHeader.appendChild(tabBtn);
 
         var panel = document.createElement('div');
@@ -789,7 +802,8 @@ APPLY_TABBED_LAYOUT = """
                 if (tabs[letter].btn) {
                     var b = tabs[letter].btn;
                     var mark = (total > 0 && done === total) ? ' ✓' : ' (' + done + '/' + total + ')';
-                    b.textContent = '模型' + letter + mark;
+                    var lbl = b.querySelector('span');
+                    if (lbl) lbl.textContent = letter + mark;
                 }
                 if (typeof _ar3_restyle_tab === 'function') _ar3_restyle_tab(letter);
             }
@@ -1127,6 +1141,7 @@ APPLY_TABBED_LAYOUT = """
                 }
 
                 // Release guard after a tick
+                if (typeof _ar3_update_tab_slots === 'function') _ar3_update_tab_slots(letter);
                 setTimeout(function() { dim.__ar3_settingActive = false; }, 300);
             };
 
@@ -1243,6 +1258,8 @@ APPLY_TABBED_LAYOUT = """
         _ar3_update_score();
     });
 
+    modelLetters.forEach(function(l) { _ar3_update_tab_slots(l); });
+
     var _ar3_active_letter = modelLetters.length ? modelLetters[0] : '';
     var _ar3_focus_dim_idx = 0;
 
@@ -1254,17 +1271,68 @@ APPLY_TABBED_LAYOUT = """
         var active = (letter === _ar3_active_letter);
         var incomplete = !!t.incomplete;
         if (active) {
-            t.btn.style.background = '#1a1a2e';
-            t.btn.style.color = '#e94560';
-            t.btn.style.borderBottom = '2px solid #e94560';
+            if (incomplete) {
+                t.btn.style.background = '#e0a030';
+                t.btn.style.border = '3px solid #e0a030';
+            } else {
+                t.btn.style.background = '#d0d0d0';
+                t.btn.style.border = '3px solid #d0d0d0';
+            }
+            _set_tab_color(t.btn, '#1a1a2e');
         } else if (incomplete) {
             t.btn.style.background = 'transparent';
-            t.btn.style.color = '#e0a030';
-            t.btn.style.borderBottom = '2px solid #e0a030';
+            t.btn.style.border = '3px solid transparent';
+            t.btn.style.borderBottom = '3px solid #e0a030';
+            _set_tab_color(t.btn, '#e0a030');
         } else {
             t.btn.style.background = 'transparent';
-            t.btn.style.color = '#a0a0b0';
-            t.btn.style.borderBottom = '2px solid transparent';
+            t.btn.style.border = '3px solid transparent';
+            _set_tab_color(t.btn, '#d0d0d0');
+        }
+    }
+
+    function _set_tab_color(btn, color) {
+        var spans = btn.querySelectorAll('span');
+        for (var i = 0; i < spans.length; i++) spans[i].style.color = color;
+    }
+
+    function _ar3_dim_char(dim) {
+        if (!dim || !dim.__ar3_reasonInfo) return ' ';
+        var idx = dim.__ar3_reasonInfo.getActiveIdx();
+        if (idx < 0) return ' ';
+        if (idx === 0) return '\u25cb';
+        if (idx === 4) return '\u00d7';
+        return String(idx);
+    }
+
+    function _ar3_update_tab_slots(letter) {
+        var t = tabs[letter];
+        if (!t || !t.btn) return;
+        var dims = (evalByModel[letter] || []).slice().sort(function(a, b) {
+            return (a.__ar3_dimPrefix || '').localeCompare(b.__ar3_dimPrefix || '');
+        });
+        var slotEl = t.btn.querySelector('.__ar3_tab_slots');
+        if (!slotEl) return;
+        var chars = [];
+        for (var i = 0; i < 5; i++) {
+            var ch = i < dims.length ? _ar3_dim_char(dims[i]) : ' ';
+            chars.push(ch === ' ' ? ' ' : ch);
+        }
+        slotEl.textContent = '[ ' + chars.join(', ') + ' ]';
+    }
+
+    function _ar3_refresh_rank_highlight() {
+        var slots = rankListRow.querySelectorAll('[data-rank-model]');
+        for (var i = 0; i < slots.length; i++) {
+            var l = slots[i].getAttribute('data-rank-model') || '';
+            var span = slots[i].querySelector('span:nth-child(2)');
+            if (!span) continue;
+            var raw = span.textContent || '';
+            if (l && l.toUpperCase() === _ar3_active_letter) {
+                if (raw.indexOf('>>') < 0) span.textContent = '>> ' + raw + ' <<';
+            } else {
+                span.textContent = raw.replace(/^>>\s*/, '').replace(/\s*<<$/, '');
+            }
         }
     }
 
@@ -1299,10 +1367,11 @@ APPLY_TABBED_LAYOUT = """
             if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.fillFromAi) d.__ar3_reasonInfo.fillFromAi(true, true);
         });
         _ar3_highlight_focus();
+        _ar3_refresh_rank_highlight();
     }
 
     tabHeader.addEventListener('click', function(e) {
-        var btn = e.target.closest('button[data-model]');
+        var btn = e.target.closest('[data-model]');
         if (!btn) return;
         _ar3_activate_tab(btn.getAttribute('data-model'));
     });

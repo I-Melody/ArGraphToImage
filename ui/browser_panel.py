@@ -192,3 +192,6 @@ class BrowserPanel(QWidget):
 
     def profile(self):
         return self._web_profile
+
+    def set_url_bar_visible(self, visible):
+        self._url_bar.setVisible(visible)

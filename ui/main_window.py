@@ -153,6 +153,9 @@ class MainWindow(QMainWindow):
         page = self.browser().page()
         page.runJavaScript(DRAIN_AI_QUEUE, self._dispatch_ai_requests)
         page.runJavaScript(DRAIN_POPUP_QUEUE, self._dispatch_popup_requests)
+        page.runJavaScript(
+            "var v = !!window.__ar3_overlay_just_closed; window.__ar3_overlay_just_closed = false; v;",
+            self._on_overlay_close_check)
 
     def _dispatch_ai_requests(self, payload):
         if not payload or payload == "[]":
@@ -187,6 +190,10 @@ class MainWindow(QMainWindow):
         js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"
         self.browser().page().runJavaScript(js)
 
+    def _on_overlay_close_check(self, closed):
+        if closed:
+            self._browser_panel.set_url_bar_visible(True)
+
     def _on_recognize_requested(self):
         self._auto_apply_after_detect = False
         self._status_bar.showMessage("正在识别页面...")
@@ -195,11 +202,13 @@ class MainWindow(QMainWindow):
 
     def _on_transform_requested(self):
         _log.info("Transform layout requested")
+        self._inject_word_config()
         self._adjuster.apply_tabbed_layout()
 
     def _on_remove_requested(self):
         _log.info("Remove layout requested")
         self._adjuster.remove_layout()
+        self._browser_panel.set_url_bar_visible(True)
 
     def _on_content_changed(self, payload):
         changes = payload.get("changes", []) if isinstance(payload, dict) else []
@@ -291,6 +300,7 @@ class MainWindow(QMainWindow):
         if overlay_open:
             _log.info("Parse toggle: removing overlay")
             self._adjuster.remove_layout()
+            self._browser_panel.set_url_bar_visible(True)
             self._status_bar.showMessage("已返回原页面")
             return
         _log.info("Parse toggle: detecting + applying layout")
@@ -343,6 +353,7 @@ class MainWindow(QMainWindow):
         status = result.get("status", "unknown")
         _log.info(f"Layout applied: status={status}, count={result.get('count', 0)}")
         if status == "transformed":
+            self._browser_panel.set_url_bar_visible(False)
             scheme = config.get("sort_scheme", "inconsistency")
             self.browser().page().runJavaScript(
                 f"window.__ar3_sort_scheme = {json.dumps(scheme)};")
