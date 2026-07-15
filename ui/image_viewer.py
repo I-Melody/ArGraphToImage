@@ -1,5 +1,5 @@
 from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QPoint, QStandardPaths
-from PyQt6.QtGui import QPixmap, QCursor, QPainter, QColor, QPolygon
+from PyQt6.QtGui import QPixmap, QCursor, QPainter, QColor, QPolygon, QTransform
 from PyQt6.QtWidgets import (
     QDialog, QLabel, QPushButton,
     QScrollArea, QWidget,
@@ -84,6 +84,8 @@ class ImageViewerDialog(QDialog):
         self._scale = 1.0
         self._min_scale = 0.1
         self._pixmap = None
+        self._rotation = 0
+        self._mirrored = False
         self._nam = QNetworkAccessManager(self)
 
         self.setWindowTitle("图片查看")
@@ -117,6 +119,29 @@ class ImageViewerDialog(QDialog):
             "QPushButton:hover{background:rgba(233,69,96,0.75);}")
         self._close_btn.clicked.connect(self.close)
 
+        _btn_style = (
+            "QPushButton{background:rgba(40,40,70,0.5);color:#c0c0c0;border:none;"
+            "border-radius:16px;font-size:14px;font-weight:bold;}"
+            "QPushButton:hover{background:rgba(100,100,180,0.6);color:#fff;}")
+
+        self._btn_mirror = QPushButton("\u21c4", self)
+        self._btn_mirror.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_mirror.setToolTip("水平翻转")
+        self._btn_mirror.setStyleSheet(_btn_style)
+        self._btn_mirror.clicked.connect(self._on_mirror)
+
+        self._btn_rot_left = QPushButton("\u21b6", self)
+        self._btn_rot_left.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_rot_left.setToolTip("向左旋转 15°")
+        self._btn_rot_left.setStyleSheet(_btn_style)
+        self._btn_rot_left.clicked.connect(lambda: self._on_rotate(-15))
+
+        self._btn_rot_right = QPushButton("\u21b7", self)
+        self._btn_rot_right.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_rot_right.setToolTip("向右旋转 15°")
+        self._btn_rot_right.setStyleSheet(_btn_style)
+        self._btn_rot_right.clicked.connect(lambda: self._on_rotate(15))
+
         self._resize_grip = _ResizeGrip(self)
 
         self._wheel_zoom_delta = 0
@@ -135,9 +160,15 @@ class ImageViewerDialog(QDialog):
         self._scroll.setGeometry(0, 0, w, h)
         self._dragbar.setGeometry(0, 0, max(0, w - 48), 44)
         self._close_btn.setGeometry(w - 40, 6, 32, 32)
+        self._btn_mirror.setGeometry(w - 80, 6, 32, 32)
+        self._btn_rot_left.setGeometry(w - 120, 6, 32, 32)
+        self._btn_rot_right.setGeometry(w - 160, 6, 32, 32)
         self._resize_grip.setGeometry(w - 20, h - 20, 20, 20)
         self._dragbar.raise_()
         self._close_btn.raise_()
+        self._btn_mirror.raise_()
+        self._btn_rot_left.raise_()
+        self._btn_rot_right.raise_()
         self._resize_grip.raise_()
 
         if self._pixmap:
@@ -200,8 +231,23 @@ class ImageViewerDialog(QDialog):
         h = int(self._pixmap.height() * self._scale)
         scaled = self._pixmap.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
                                      Qt.TransformationMode.SmoothTransformation)
+        if self._mirrored or self._rotation != 0:
+            t = QTransform()
+            if self._mirrored:
+                t.scale(-1, 1)
+            if self._rotation != 0:
+                t.rotate(self._rotation)
+            scaled = scaled.transformed(t, Qt.TransformationMode.SmoothTransformation)
         self._label.setPixmap(scaled)
         self._label.resize(scaled.size())
+
+    def _on_mirror(self):
+        self._mirrored = not self._mirrored
+        self._apply_scale()
+
+    def _on_rotate(self, delta):
+        self._rotation = (self._rotation + delta) % 360
+        self._apply_scale()
 
     def _on_image_loaded(self, data):
         pix = QPixmap()
