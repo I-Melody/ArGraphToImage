@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
             return
         url = self.browser().url().toString()
         _log.info(f"Page loaded: {url}")
+        self._inject_word_config()
         event_bus.page_loaded.emit(url)
         self._injector.start_monitoring()
         self._monitor_timer.start()
@@ -265,6 +266,17 @@ class MainWindow(QMainWindow):
                 "add": config.get("slider_add", [30, 10, 0, -10, -30]),
             }
         self.browser().page().runJavaScript(f"window.__ar3_slider_cfg = {json.dumps(slider_cfg)};")
+
+    def _inject_word_config(self):
+        import os as _os
+        cfg_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "word.config")
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                word_cfg = json.load(f)
+        except Exception:
+            word_cfg = {}
+        self.browser().page().runJavaScript(f"window.__ar3_word_config = {json.dumps(word_cfg)};")
+        _log.info("Word config injected")
 
     def _on_parse_clicked(self):
         self.browser().page().runJavaScript(

@@ -227,6 +227,18 @@ APPLY_TABBED_LAYOUT = """
         return JSON.stringify({status: 'no_grid_found', count: 0});
     }
 
+    var _sev_cfg = ((window.__ar3_word_config || {}).severity) || {"轻度":["轻度不一致"],"中度":["中度不一致"],"重度":["重度不一致"]};
+    var _sev_keys = Object.keys(_sev_cfg);
+    var _sev_all = [];
+    _sev_keys.forEach(function(k) { _sev_all = _sev_all.concat(_sev_cfg[k]); });
+    var _sev_to_key = function(kw) {
+        for (var i = 0; i < _sev_keys.length; i++) {
+            if (_sev_cfg[_sev_keys[i]].indexOf(kw) >= 0) return _sev_keys[i];
+        }
+        return '';
+    };
+    var _sev_first = function(key) { return (_sev_cfg[key] || [])[0] || ''; };
+
     if (!document.getElementById('__ar3_styles')) {
         var sty = document.createElement('style');
         sty.id = '__ar3_styles';
@@ -901,11 +913,11 @@ APPLY_TABBED_LAYOUT = """
                 var raw = initOriginal.textContent || '';
                 var rm = raw.match(/参考图[：:][\\s\\S]*?(?=生成图[：:]|$)/);
                 if (rm) parsed.refText = rm[0].replace(/^参考图[：:]\\s*/, '').trim();
-                var gm = raw.match(/生成图[：:][\\s\\S]*?(?=轻度不一致|中度不一致|重度不一致|$)/);
+                var _gmRe = new RegExp('生成图[：:][\\\\s\\\\S]*?(?=' + _sev_all.join('|') + '|$)');
+                var gm = raw.match(_gmRe);
                 if (gm) parsed.genText = gm[0].replace(/^生成图[：:]\\s*/, '').trim();
-                var sevs = ['轻度不一致','中度不一致','重度不一致'];
-                for (var si = 0; si < sevs.length; si++) {
-                    if (raw.indexOf(sevs[si]) >= 0) { parsed.severity = sevs[si]; break; }
+                for (var si = 0; si < _sev_all.length; si++) {
+                    if (raw.indexOf(_sev_all[si]) >= 0) { parsed.severity = _sev_all[si]; break; }
                 }
             }
 
@@ -947,9 +959,9 @@ APPLY_TABBED_LAYOUT = """
             var _sc = window.__ar3_scores || {};
             var btnDefs = [
                 {label: '一致', severity: '', value: '一致', score: 0},
-                {label: '轻度', severity: '轻度不一致', value: '不一致', score: (typeof _sc.light === 'number' ? _sc.light : -100)},
-                {label: '中度', severity: '中度不一致', value: '不一致', score: (typeof _sc.moderate === 'number' ? _sc.moderate : -301)},
-                {label: '重度', severity: '重度不一致', value: '不一致', score: (typeof _sc.severe === 'number' ? _sc.severe : -710)},
+                {label: '轻度', severity: _sev_first('轻度'), value: '不一致', score: (typeof _sc.light === 'number' ? _sc.light : -100)},
+                {label: '中度', severity: _sev_first('中度'), value: '不一致', score: (typeof _sc.moderate === 'number' ? _sc.moderate : -301)},
+                {label: '重度', severity: _sev_first('重度'), value: '不一致', score: (typeof _sc.severe === 'number' ? _sc.severe : -710)},
                 {label: '不适用', severity: '', value: '不适用', score: 0}
             ];
 
@@ -958,8 +970,9 @@ APPLY_TABBED_LAYOUT = """
 
             var activeIdx = -1;
             if (selectedVal === '不一致') {
-                if (parsed.severity === '轻度不一致') activeIdx = 1;
-                else if (parsed.severity === '重度不一致') activeIdx = 3;
+                var _sk = _sev_to_key(parsed.severity);
+                if (_sk === '轻度') activeIdx = 1;
+                else if (_sk === '重度') activeIdx = 3;
                 else activeIdx = 2; // default to 中度
             } else if (selectedVal === '一致') {
                 activeIdx = 0;
@@ -1436,12 +1449,12 @@ APPLY_TABBED_LAYOUT = """
                 ri._lastSyncedRaw = raw;
                 var rm = raw.match(/参考图[：:][\\s\\S]*?(?=生成图[：:]|$)/);
                 ri.taA.value = rm ? rm[0].replace(/^参考图[：:]\\s*/, '').trim() : '';
-                var gm = raw.match(/生成图[：:][\\s\\S]*?(?=轻度不一致|中度不一致|重度不一致|$)/);
+                var _gmRe2 = new RegExp('生成图[：:][\\\\s\\\\S]*?(?=' + _sev_all.join('|') + '|$)');
+                var gm = raw.match(_gmRe2);
                 ri.taB.value = gm ? gm[0].replace(/^生成图[：:]\\s*/, '').trim() : '';
-                var sevs = ['轻度不一致','中度不一致','重度不一致'];
                 var foundSev = '';
-                for (var si = 0; si < sevs.length; si++) {
-                    if (raw.indexOf(sevs[si]) >= 0) { foundSev = sevs[si]; break; }
+                for (var si = 0; si < _sev_all.length; si++) {
+                    if (raw.indexOf(_sev_all[si]) >= 0) { foundSev = _sev_all[si]; break; }
                 }
                 // Map severity to button index (0=一致,1=轻度,2=中度,3=重度,4=不适用)
                 // Use FRESH DOM query (dim may have been replaced by Vue re-render)
@@ -1451,8 +1464,9 @@ APPLY_TABBED_LAYOUT = """
                     if (cbVal === '一致') {
                         sevIdx = 0;
                     } else if (cbVal === '不一致') {
-                        if (foundSev === '轻度不一致') sevIdx = 1;
-                        else if (foundSev === '重度不一致') sevIdx = 3;
+                        var _sk2 = _sev_to_key(foundSev);
+                        if (_sk2 === '轻度') sevIdx = 1;
+                        else if (_sk2 === '重度') sevIdx = 3;
                         else sevIdx = 2;
                     } else if (cbVal === '不适用') {
                         sevIdx = 4;
