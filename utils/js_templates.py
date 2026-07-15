@@ -811,6 +811,7 @@ APPLY_TABBED_LAYOUT = """
                 }
                 if (typeof _ar3_restyle_tab === 'function') _ar3_restyle_tab(letter);
             }
+            if (typeof _ar3_refresh_rank_highlight === 'function') _ar3_refresh_rank_highlight();
             return {done: done, total: total};
         };
 
@@ -1336,13 +1337,16 @@ APPLY_TABBED_LAYOUT = """
         var slots = rankListRow.querySelectorAll('[data-rank-model]');
         for (var i = 0; i < slots.length; i++) {
             var l = slots[i].getAttribute('data-rank-model') || '';
-            var span = slots[i].querySelector('span:nth-child(2)');
-            if (!span) continue;
-            var raw = span.textContent || '';
             if (l && l.toUpperCase() === _ar3_active_letter) {
-                if (raw.indexOf('>>') < 0) span.textContent = '>> ' + raw + ' <<';
+                var t = tabs[l] || {};
+                var color = t.incomplete ? '#e0a030' : '#d0d0d0';
+                slots[i].style.outline = '2px solid ' + color;
+                slots[i].style.outlineOffset = '2px';
+                slots[i].style.background = '#2a2a4e';
             } else {
-                span.textContent = raw.replace(/^>>\s*/, '').replace(/\s*<<$/, '');
+                slots[i].style.outline = 'none';
+                slots[i].style.outlineOffset = '0px';
+                slots[i].style.background = '#1a1a2e';
             }
         }
     }
