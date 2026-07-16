@@ -488,7 +488,8 @@ APPLY_TABBED_LAYOUT = """
         slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:6px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
         var letter = (name.match(/模型([A-H])/) || [])[1] || '';
         slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + (ri + 1) + '</span>' +
-            '<span>' + name + '</span>';
+            '<span>模型' + letter + '</span>' +
+            '<span class="__ar3_rank_chars" style="font-size:11px;opacity:0.8;">' + _ar3_model_chars(letter) + '</span>';
         slot.setAttribute('data-rank-model', letter);
         slot.addEventListener('click', function(e) {
             var l = (e.currentTarget.getAttribute('data-rank-model') || '').toUpperCase();
@@ -630,6 +631,7 @@ APPLY_TABBED_LAYOUT = """
             slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
             slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
                 '<span>模型' + s.letter + '</span>' +
+                '<span class="__ar3_rank_chars" style="font-size:11px;opacity:0.8;">' + _ar3_model_chars(s.letter) + '</span>' +
                 '<span style="opacity:0.7;font-size:11px;">' + detail + '</span>';
             slot.setAttribute('data-rank-model', s.letter);
             slot.addEventListener('click', function(e) {
@@ -909,6 +911,11 @@ APPLY_TABBED_LAYOUT = """
                 var original = _ar3_find_original_input(dim);
                 if (original) {
                     var prevFocus = document.activeElement;
+                    var imeActive = dim.__ar3_composing;
+                    if (imeActive) {
+                        if (retries < 30) { setTimeout(function() { _ar3_compose_reason(retries + 1, clearOnly); }, 100); }
+                        return;
+                    }
                     original.focus();
                     original.innerText = text;
                     try {
@@ -1254,6 +1261,10 @@ APPLY_TABBED_LAYOUT = """
             // write->observer->overwrite loop that was interrupting input).
             taA.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
             taB.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taA.addEventListener('compositionstart', function() { dim.__ar3_composing = true; });
+            taA.addEventListener('compositionend', function() { dim.__ar3_composing = false; });
+            taB.addEventListener('compositionstart', function() { dim.__ar3_composing = true; });
+            taB.addEventListener('compositionend', function() { dim.__ar3_composing = false; });
 
             // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
             var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致');
@@ -1309,28 +1320,33 @@ APPLY_TABBED_LAYOUT = """
     }
 
     function _ar3_dim_char(dim) {
-        if (!dim || !dim.__ar3_reasonInfo) return ' ';
+        if (!dim || !dim.__ar3_reasonInfo) return '-';
         var idx = dim.__ar3_reasonInfo.getActiveIdx();
-        if (idx < 0) return ' ';
-        if (idx === 0) return '\u25cb';
+        if (idx < 0) return '-';
+        if (idx === 0) return '0';
         if (idx === 4) return '\u00d7';
         return String(idx);
+    }
+
+    function _ar3_model_chars(letter) {
+        var dims = (evalByModel[letter] || []).slice().sort(function(a, b) {
+            return (a.__ar3_dimPrefix || '').localeCompare(b.__ar3_dimPrefix || '');
+        });
+        var chars = [];
+        for (var i = 0; i < 5; i++) {
+            var ch = i < dims.length ? _ar3_dim_char(dims[i]) : '-';
+            chars.push(ch);
+        }
+        return '[ ' + chars.join(', ') + ' ]';
     }
 
     function _ar3_update_tab_slots(letter) {
         var t = tabs[letter];
         if (!t || !t.btn) return;
-        var dims = (evalByModel[letter] || []).slice().sort(function(a, b) {
-            return (a.__ar3_dimPrefix || '').localeCompare(b.__ar3_dimPrefix || '');
-        });
         var slotEl = t.btn.querySelector('.__ar3_tab_slots');
-        if (!slotEl) return;
-        var chars = [];
-        for (var i = 0; i < 5; i++) {
-            var ch = i < dims.length ? _ar3_dim_char(dims[i]) : ' ';
-            chars.push(ch === ' ' ? ' ' : ch);
-        }
-        slotEl.textContent = '[ ' + chars.join(', ') + ' ]';
+        if (slotEl) slotEl.textContent = _ar3_model_chars(letter);
+        var rankChars = rankListRow.querySelector('[data-rank-model="' + letter + '"] .__ar3_rank_chars');
+        if (rankChars) rankChars.textContent = _ar3_model_chars(letter);
     }
 
     function _ar3_refresh_rank_highlight() {
