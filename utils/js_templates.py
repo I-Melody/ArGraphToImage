@@ -921,7 +921,9 @@ APPLY_TABBED_LAYOUT = """
                 if (original) {
                     var prevFocus = document.activeElement;
                     var imeActive = dim.__ar3_composing;
-                    if (imeActive) {
+                    var inCooldown = dim.__ar3_compose_cool && Date.now() < dim.__ar3_compose_cool;
+                    var anyImeActive = window.__ar3_ime_until && Date.now() < window.__ar3_ime_until;
+                    if (imeActive || inCooldown || anyImeActive) {
                         if (retries < 30) { setTimeout(function() { _ar3_compose_reason(retries + 1, clearOnly); }, 100); }
                         return;
                     }
@@ -1268,12 +1270,26 @@ APPLY_TABBED_LAYOUT = """
             // Typing only marks the field dirty; the original page is written
             // ONLY when the tab-level 提交本页 button is clicked (avoids the
             // write->observer->overwrite loop that was interrupting input).
-            taA.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
-            taB.addEventListener('input', function() { dim.__ar3_dirty = true; if (typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
-            taA.addEventListener('compositionstart', function() { dim.__ar3_composing = true; });
-            taA.addEventListener('compositionend', function() { dim.__ar3_composing = false; });
-            taB.addEventListener('compositionstart', function() { dim.__ar3_composing = true; });
-            taB.addEventListener('compositionend', function() { dim.__ar3_composing = false; });
+            // During IME composition, defer progress/label updates to compositionend
+            // to avoid DOM writes interfering with the IME session.
+            taA.addEventListener('input', function() { dim.__ar3_dirty = true; if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taB.addEventListener('input', function() { dim.__ar3_dirty = true; if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taA.addEventListener('compositionstart', function() { dim.__ar3_composing = true; window.__ar3_ime_until = Date.now() + 120000; });
+            taA.addEventListener('compositionend', function() {
+                dim.__ar3_composing = false;
+                dim.__ar3_dirty = true;
+                dim.__ar3_compose_cool = Date.now() + 200;
+                window.__ar3_ime_until = Date.now() + 200;
+                if (typeof _ar3_update_progress === 'function') _ar3_update_progress();
+            });
+            taB.addEventListener('compositionstart', function() { dim.__ar3_composing = true; window.__ar3_ime_until = Date.now() + 120000; });
+            taB.addEventListener('compositionend', function() {
+                dim.__ar3_composing = false;
+                dim.__ar3_dirty = true;
+                dim.__ar3_compose_cool = Date.now() + 200;
+                window.__ar3_ime_until = Date.now() + 200;
+                if (typeof _ar3_update_progress === 'function') _ar3_update_progress();
+            });
 
             // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
             var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致');
@@ -1364,8 +1380,8 @@ APPLY_TABBED_LAYOUT = """
         var slots = rankListRow.querySelectorAll('[data-rank-model]');
         for (var i = 0; i < slots.length; i++) {
             var l = slots[i].getAttribute('data-rank-model') || '';
+            var t = tabs[l] || {};
             if (l && l.toUpperCase() === _ar3_active_letter) {
-                var t = tabs[l] || {};
                 var color = t.incomplete ? '#e0a030' : '#d0d0d0';
                 slots[i].style.outline = '2px solid ' + color;
                 slots[i].style.outlineOffset = '2px';
@@ -1375,6 +1391,10 @@ APPLY_TABBED_LAYOUT = """
                 slots[i].style.outlineOffset = '0px';
                 slots[i].style.background = '#1a1a2e';
             }
+            var rm = slots[i].querySelector('.__ar3_rank_model');
+            if (rm) rm.style.color = t.incomplete ? '#e0a030' : '#e0e0e0';
+            var rc = slots[i].querySelector('.__ar3_rank_chars');
+            if (rc && l) rc.textContent = _ar3_model_chars(l);
         }
     }
 
@@ -1423,6 +1443,8 @@ APPLY_TABBED_LAYOUT = """
     // 1~5 : set severity of focused dimension | Ctrl+Enter : 提交本页
     window.addEventListener('keydown', function(e) {
         if (!document.getElementById('__ar3_tab_overlay')) return;
+
+        if (e.isComposing) return;
 
         var ae = document.activeElement;
         var typing = ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable);
@@ -1543,7 +1565,10 @@ APPLY_TABBED_LAYOUT = """
                 tab.modelImg.src = si.src;
             }
         });
-        // Sync remark inputs from original -> overlay
+        // Sync remark inputs from original -> overlay.
+        // Skip entirely while any IME composition is active — writing to
+        // textarea.value mid-composition forces premature commit (pinyin leak).
+        if (window.__ar3_ime_until && Date.now() < window.__ar3_ime_until) return;
         Object.keys(evalByModel).forEach(function(letter) {
             (evalByModel[letter] || []).forEach(function(dim) {
                 if (!dim.__ar3_reasonInfo) return;
@@ -1579,7 +1604,10 @@ APPLY_TABBED_LAYOUT = """
 
                 // Skip sync for dimensions the user is currently editing —
                 // otherwise each write-then-observer cycle clobbers the textareas.
-                if (dim.__ar3_dirty || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
+                // Also skip during IME composition: programmatic value assignment
+                // on a composing textarea forces composition to commit prematurely
+                // (pinyin can leak into the final text).
+                if (dim.__ar3_dirty || dim.__ar3_composing || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
 
                 // Find corresponding MS to read checkbox state (by label text)
                 var allMS = _syncMS;
