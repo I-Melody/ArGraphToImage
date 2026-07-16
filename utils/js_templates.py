@@ -460,6 +460,15 @@ APPLY_TABBED_LAYOUT = """
     tabHeader.id = '__ar3_tab_header';
     tabHeader.style.cssText = 'display:flex;flex:1;gap:4px;';
     topBar.appendChild(tabHeader);
+    var popupCloseBtn = document.createElement('button');
+    popupCloseBtn.textContent = '关弹窗';
+    popupCloseBtn.title = '关闭所有已打开的图片弹窗';
+    popupCloseBtn.style.cssText = 'flex-shrink:0;align-self:center;margin-left:8px;background:#1a1a2e;color:#a0a0b0;border:1px solid #2a2a4a;border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12px;font-family:inherit;';
+    popupCloseBtn.onclick = function() {
+        window.__ar3_popup_queue = window.__ar3_popup_queue || [];
+        window.__ar3_popup_queue.push(JSON.stringify({key: '__close_all__', src: ''}));
+    };
+    topBar.appendChild(popupCloseBtn);
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '返回原页面';
     closeBtn.style.cssText = 'flex-shrink:0;align-self:center;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
@@ -488,7 +497,7 @@ APPLY_TABBED_LAYOUT = """
         slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:6px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
         var letter = (name.match(/模型([A-H])/) || [])[1] || '';
         slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + (ri + 1) + '</span>' +
-            '<span>模型' + letter + '</span>' +
+            '<span class="__ar3_rank_model">模型' + letter + '</span>' +
             '<span class="__ar3_rank_chars" style="font-size:11px;opacity:0.8;">' + _ar3_model_chars(letter) + '</span>';
         slot.setAttribute('data-rank-model', letter);
         slot.addEventListener('click', function(e) {
@@ -630,7 +639,7 @@ APPLY_TABBED_LAYOUT = """
             var slot = document.createElement('div');
             slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:5px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';cursor:pointer;';
             slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + s.rank + '</span>' +
-                '<span>模型' + s.letter + '</span>' +
+                '<span class="__ar3_rank_model">模型' + s.letter + '</span>' +
                 '<span class="__ar3_rank_chars" style="font-size:11px;opacity:0.8;">' + _ar3_model_chars(s.letter) + '</span>' +
                 '<span style="opacity:0.7;font-size:11px;">' + detail + '</span>';
             slot.setAttribute('data-rank-model', s.letter);
@@ -1347,6 +1356,8 @@ APPLY_TABBED_LAYOUT = """
         if (slotEl) slotEl.textContent = _ar3_model_chars(letter);
         var rankChars = rankListRow.querySelector('[data-rank-model="' + letter + '"] .__ar3_rank_chars');
         if (rankChars) rankChars.textContent = _ar3_model_chars(letter);
+        var rankModel = rankListRow.querySelector('[data-rank-model="' + letter + '"] .__ar3_rank_model');
+        if (rankModel) rankModel.style.color = t.incomplete ? '#e0a030' : '#e0e0e0';
     }
 
     function _ar3_refresh_rank_highlight() {

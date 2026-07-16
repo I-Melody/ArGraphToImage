@@ -77,6 +77,15 @@ class ImageViewerDialog(QDialog):
         dlg.finished.connect(lambda: cls._open.pop(key, None))
         dlg.show()
 
+    @classmethod
+    def close_all(cls):
+        for dlg in list(cls._open.values()):
+            try:
+                dlg.close()
+            except Exception:
+                pass
+        cls._open.clear()
+
     def __init__(self, key, src, parent=None):
         super().__init__(parent)
         self._key = key
@@ -93,6 +102,7 @@ class ImageViewerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint
                             | Qt.WindowType.WindowStaysOnTopHint)
         self.setStyleSheet("ImageViewerDialog{background:#2a2a2e;}")
+        self.setMinimumSize(120, 80)
         self.resize(400, 300)
 
         self._scroll = QScrollArea(self)
@@ -119,6 +129,17 @@ class ImageViewerDialog(QDialog):
             "border-radius:16px;font-size:16px;font-weight:bold;}"
             "QPushButton:hover{background:rgba(233,69,96,0.75);}")
         self._close_btn.clicked.connect(self.close)
+
+        _badge_text = ""
+        if key == "ref_image":
+            _badge_text = "\u53c2"
+        elif key.startswith("model_"):
+            _badge_text = key[-1] if len(key) > 6 and key[-1].isalpha() else ""
+        self._badge_label = QLabel(_badge_text, self)
+        self._badge_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._badge_label.setStyleSheet(
+            "QLabel{background:rgba(0,0,0,0.35);color:rgba(255,255,255,0.55);"
+            "font-size:18px;font-weight:bold;padding:3px 8px;border-radius:4px;}")
 
         _btn_style = (
             "QPushButton{background:rgba(40,40,70,0.5);color:#c0c0c0;border:none;"
@@ -165,12 +186,15 @@ class ImageViewerDialog(QDialog):
         self._btn_rot_left.setGeometry(w - 120, 6, 32, 32)
         self._btn_rot_right.setGeometry(w - 160, 6, 32, 32)
         self._resize_grip.setGeometry(w - 20, h - 20, 20, 20)
+        self._badge_label.setGeometry(10, 10, 40, 30)
+        self._badge_label.adjustSize()
         self._dragbar.raise_()
         self._close_btn.raise_()
         self._btn_mirror.raise_()
         self._btn_rot_left.raise_()
         self._btn_rot_right.raise_()
         self._resize_grip.raise_()
+        self._badge_label.raise_()
 
         if self._pixmap:
             self._pending_apply = True

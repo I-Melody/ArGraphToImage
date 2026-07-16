@@ -22,6 +22,7 @@ from core import ai_client
 from core import event_bus
 from config import manager as config
 from utils.js_templates import POLL_QUEUES
+from ui.image_viewer import ImageViewerDialog
 
 _log = logging.getLogger("main_win")
 _WORD_CONFIG_CACHE = None
@@ -204,6 +205,9 @@ class MainWindow(QMainWindow):
         page = self.browser().page()
         for req in requests:
             key = req.get("key")
+            if key == "__close_all__":
+                ImageViewerDialog.close_all()
+                continue
             src = req.get("src")
             if key and src and hasattr(page, "open_image_popup"):
                 page.open_image_popup(key, src)
