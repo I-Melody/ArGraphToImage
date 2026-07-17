@@ -1,6 +1,5 @@
 import os
 import re
-import time
 import json
 import base64
 import logging
@@ -97,9 +96,6 @@ class AiClient(QObject):
             url = src
         return {"type": "image_url", "image_url": {"url": url}}
 
-    _MAX_RETRIES = 3
-    _RETRY_DELAYS = [2, 4, 8]
-
     def _call_api(self, ref_src, desc=None):
         key = _load_key()
         if not key:
@@ -123,42 +119,29 @@ class AiClient(QObject):
         body = json.dumps({"model": MODEL, "messages": [
                           {"role": "user", "content": content}]})
         body_bytes = body.encode("utf-8")
+        _log.info(f"Sending AI describe request: model={MODEL} len={len(body_bytes)}")
 
-        last_error = None
-        for attempt in range(self._MAX_RETRIES + 1):
-            try:
-                return self._call_once(key, body_bytes, attempt)
-            except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError) as e:
-                last_error = e
-                code = e.code if isinstance(e, urllib.error.HTTPError) else None
-                if code in (401, 403):
-                    break
-                if attempt < self._MAX_RETRIES:
-                    delay = self._RETRY_DELAYS[attempt]
-                    _log.warning(f"API attempt {attempt+1} failed ({e}), retrying in {delay}s")
-                    time.sleep(delay)
-
-        if isinstance(last_error, urllib.error.HTTPError):
-            try:
-                err_body = last_error.read().decode("utf-8", errors="replace")
-                _log.error(f"AI API final error body: {err_body[:500]}")
-            except Exception:
-                pass
-            return json.dumps({"error": f"HTTP {last_error.code}: {last_error.reason}（已重试{self._MAX_RETRIES}次）"}, ensure_ascii=False)
-        return json.dumps({"error": f"网络超时或连接失败（已重试{self._MAX_RETRIES}次）"}, ensure_ascii=False)
-
-    def _call_once(self, key, body_bytes, attempt):
         req = urllib.request.Request(_BASE, data=body_bytes)
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + key)
-        timeout = 120 if attempt == 0 else 180
-        _log.info(f"Sending AI describe request (attempt {attempt+1}): model={MODEL} len={len(body_bytes)} timeout={timeout}s")
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        msg = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        _log.info(f"AI describe response received (attempt {attempt+1})")
-        return self._extract_json(msg)
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
+            msg = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            _log.info("AI describe response received")
+            return self._extract_json(msg)
+        except urllib.error.HTTPError as e:
+            _log.error(f"AI API HTTP {e.code}: {e.reason}")
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+                _log.error(f"AI API error body: {err_body[:500]}")
+            except Exception:
+                pass
+            return json.dumps({"error": f"HTTP {e.code}: {e.reason}"}, ensure_ascii=False)
+        except Exception as e:
+            _log.error(f"AI API call failed: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @staticmethod
     def _extract_json(text):
