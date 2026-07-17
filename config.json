@@ -8,14 +8,19 @@
   },
   "api": {
     "base_url": "",
-    "api_key": "",
-    "timeout": 30
+    "api_key": "f18d11ffb8634d39b1bea86ffb12fa79.bX9RbvuDX1zn5gG4",
+    "timeout": 30,
+    "ai_model": "glm-4.6v"
   },
   "recognition": {
     "auto_restructure": true,
     "debounce_ms": 500
   },
   "sort_scheme": "inconsistency",
+  "auto_fill_model": true,
+  "auto_fill_a3": true,
+  "auto_fill_a4": true,
+  "auto_fill_a2": true,
   "slider_mode": "multi",
   "slider_multi": [
     0.1,

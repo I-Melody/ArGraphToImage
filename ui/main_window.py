@@ -14,6 +14,7 @@ from ui.title_bar import TitleBar
 from ui.browser_panel import BrowserPanel
 from ui.assistant_panel import AssistantPanel
 from ui.settings_panel import SettingsPanel
+from ui.ai_settings_panel import AiSettingsPanel
 from core.browser_injector import BrowserInjector
 from core.layout_adjuster import LayoutAdjuster
 from core.layout_recognizer import analyze_detection
@@ -70,10 +71,16 @@ class MainWindow(QMainWindow):
         self._adjuster = LayoutAdjuster(self._injector)
         self._assistant_panel = AssistantPanel(self)
         self._settings_panel = SettingsPanel(self)
-        self._settings_panel.api_key_changed.connect(self._on_api_key_changed)
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._settings_panel.scores_changed.connect(self._on_scores_changed)
         self._settings_panel.slider_changed.connect(self._on_slider_changed)
+        self._ai_settings_panel = AiSettingsPanel(self)
+        self._ai_settings_panel.api_key_changed.connect(self._on_api_key_changed)
+        self._ai_settings_panel.ai_model_changed.connect(self._on_ai_model_changed)
+        self._ai_settings_panel.auto_fill_model_changed.connect(self._on_auto_fill_model_changed)
+        self._ai_settings_panel.auto_fill_a3_changed.connect(self._on_auto_fill_a3_changed)
+        self._ai_settings_panel.auto_fill_a4_changed.connect(self._on_auto_fill_a4_changed)
+        self._ai_settings_panel.auto_fill_a2_changed.connect(self._on_auto_fill_a2_changed)
         self._info_dialog = None
         self._ai_client = AiClient(self)
         self._ai_client.describe_done.connect(self._on_ai_described)
@@ -191,9 +198,9 @@ class MainWindow(QMainWindow):
         for req in requests:
             rid = req.get("id")
             ref = req.get("ref")
-            model = req.get("model")
-            if rid and ref and model:
-                self._ai_client.compare(rid, ref, model)
+            desc = req.get("desc")
+            if rid and ref:
+                self._ai_client.describe(rid, ref, desc)
 
     def _dispatch_popup_requests(self, payload):
         if not payload or payload == "[]":
@@ -247,12 +254,13 @@ class MainWindow(QMainWindow):
         if self._info_dialog is None:
             dlg = QDialog(self)
             dlg.setWindowTitle("识别信息")
-            dlg.resize(620, 640)
+            dlg.resize(880, 640)
             lay = QHBoxLayout(dlg)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(0)
-            lay.addWidget(self._assistant_panel, 1)
-            lay.addWidget(self._settings_panel)
+            lay.addWidget(self._assistant_panel, 2)
+            lay.addWidget(self._settings_panel, 2)
+            lay.addWidget(self._ai_settings_panel)
             self._info_dialog = dlg
         self._info_dialog.show()
         self._info_dialog.raise_()
@@ -262,6 +270,32 @@ class MainWindow(QMainWindow):
         ai_client.set_key(key)
         self._status_bar.showMessage("API Key 已更新")
         _log.info("API key updated")
+
+    def _on_ai_model_changed(self, model):
+        ai_client.set_model(model)
+        self.browser().page().runJavaScript(f"window.__ar3_ai_model = {json.dumps(model)};")
+        self._status_bar.showMessage(f"AI 模型已切换至 {model}")
+        _log.info(f"AI model changed: {model}")
+
+    def _on_auto_fill_model_changed(self, enabled):
+        self.browser().page().runJavaScript(f"window.__ar3_auto_fill_model = {json.dumps(enabled)};")
+        self._status_bar.showMessage("A0 自动填充已" + ("开启" if enabled else "关闭"))
+        _log.info(f"Auto-fill A0: {enabled}")
+
+    def _on_auto_fill_a3_changed(self, enabled):
+        self.browser().page().runJavaScript(f"window.__ar3_auto_fill_a3 = {json.dumps(enabled)};")
+        self._status_bar.showMessage("A3 自动填充已" + ("开启" if enabled else "关闭"))
+        _log.info(f"Auto-fill A3: {enabled}")
+
+    def _on_auto_fill_a4_changed(self, enabled):
+        self.browser().page().runJavaScript(f"window.__ar3_auto_fill_a4 = {json.dumps(enabled)};")
+        self._status_bar.showMessage("A4 自动填充已" + ("开启" if enabled else "关闭"))
+        _log.info(f"Auto-fill A4: {enabled}")
+
+    def _on_auto_fill_a2_changed(self, enabled):
+        self.browser().page().runJavaScript(f"window.__ar3_auto_fill_a2 = {json.dumps(enabled)};")
+        self._status_bar.showMessage("A2 色调滑杆已" + ("开启" if enabled else "关闭"))
+        _log.info(f"Auto-fill A2: {enabled}")
 
     def _on_sort_scheme_changed(self, scheme):
         js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
@@ -304,7 +338,12 @@ class MainWindow(QMainWindow):
         scores = config.get("scores", {})
         s = {"light": scores.get("light", -100), "moderate": scores.get("moderate", -301), "severe": scores.get("severe", -710)}
         slider = {"mode": config.get("slider_mode", "multi"), "multi": config.get("slider_multi", [0.1, 0.5, 1.0, 2.0, 10.0]), "add": config.get("slider_add", [30, 10, 0, -10, -30])}
-        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";"
+        ai_model = config.get("api.ai_model", "glm-4.6v")
+        auto_fill = json.dumps(config.get("auto_fill_model", False))
+        auto_fill_a3 = json.dumps(config.get("auto_fill_a3", False))
+        auto_fill_a4 = json.dumps(config.get("auto_fill_a4", False))
+        auto_fill_a2 = json.dumps(config.get("auto_fill_a2", False))
+        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";window.__ar3_ai_model=" + json.dumps(ai_model) + ";window.__ar3_auto_fill_model=" + auto_fill + ";window.__ar3_auto_fill_a3=" + auto_fill_a3 + ";window.__ar3_auto_fill_a4=" + auto_fill_a4 + ";window.__ar3_auto_fill_a2=" + auto_fill_a2 + ";"
         self.browser().page().runJavaScript(js)
 
     def _inject_word_config(self):

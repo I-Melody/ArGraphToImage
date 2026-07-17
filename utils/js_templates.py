@@ -332,12 +332,17 @@ APPLY_TABBED_LAYOUT = """
     // Shared per-dimension scale multiplier (by dimension index 0..4). Changing the
     // slider on any tab applies the same multiplier to that dimension across ALL tabs.
     var _ar3_adj_mults = [0.1, 0.5, 1, 2, 10];
-    var _ar3_dim_scale_idx = [2, 2, 2, 2, 2];
+    var _ar3_dim_scale_idx = (window.__ar3_saved_dim_scale_idx && window.__ar3_saved_dim_scale_idx.length === 5)
+        ? window.__ar3_saved_dim_scale_idx.slice() : [2, 2, 2, 2, 2];
     var _ar3_dim_scale_listeners = [[], [], [], [], []];
     var _ar3_broadcasting_scale = false;
     var _ar3_set_dim_scale = function(dimIdx, sliderIdx) {
         if (dimIdx < 0 || dimIdx > 4) return;
         _ar3_dim_scale_idx[dimIdx] = sliderIdx;
+        var _saveMode = (window.__ar3_slider_cfg || {}).mode || 'multi';
+        if (_saveMode === 'multi') {
+            window.__ar3_saved_dim_scale_idx = _ar3_dim_scale_idx.slice();
+        }
         if (_ar3_broadcasting_scale) return;
         _ar3_broadcasting_scale = true;
         _ar3_dim_scale_listeners[dimIdx].forEach(function(fn) { fn(sliderIdx); });
@@ -354,40 +359,35 @@ APPLY_TABBED_LAYOUT = """
         window.__ar3_popup_queue.push(JSON.stringify({key: key, src: src}));
     }
 
-    // ---- AI compare: one button per tab uploads BOTH 参考图 + 模型图 and asks the
-    // model to describe their per-dimension DIFFERENCES. Python drains
-    // window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
-    // Cached raw results per request id (e.g. '__ar3_ai_cmp_A') live in window.__ar3_last_ai.
+    // ---- AI describe: single global button describes the reference image only.
+    // Python drains window.__ar3_ai_queue and calls window.__ar3_ai_render(id, jsonStr).
+    // Result is cached in window.__ar3_last_ai under '__ar3_ai_desc' and shown
+    // in a fixed bar below the topBar — does NOT change with tab switching.
     window.__ar3_ai_queue = window.__ar3_ai_queue || [];
     if (typeof window.__ar3_last_ai !== 'object' || !window.__ar3_last_ai) window.__ar3_last_ai = {};
-    // Task signature = current reference-image src. If it changed since the previous
-    // overlay build, the cached comparisons belong to a previous 题目 → drop them so a
-    // new question does NOT auto-fill with the last question's AI content.
     var _ar3_task_sig = (function() { var im = refItem && refItem.querySelector('img.img'); return im ? im.src : ''; })();
     if (window.__ar3_ai_task_sig !== _ar3_task_sig) {
         window.__ar3_last_ai = {};
         window.__ar3_ai_task_sig = _ar3_task_sig;
     }
-    window.__ar3_fill_btns = [];
-    window.__ar3_refresh_fill_btns = function() {
-        window.__ar3_fill_btns.forEach(function(f) { if (f && f.update) f.update(); });
-    };
     var _ar3_ai_order = ['整体身份','整体形状与局部结构','颜色与材质','图案装饰logo商标','文字信息'];
-
-    var _ar3_get_ai = function(reqId) {
-        var raw = window.__ar3_last_ai[reqId];
-        if (!raw) return null;
-        try { return JSON.parse(raw); } catch (e) { return null; }
-    };
 
     var _ar3_grab_img = function(img) {
         if (!img || !img.src) return null;
         try {
+            var MAX = 2048;
+            var nw = img.naturalWidth || img.width;
+            var nh = img.naturalHeight || img.height;
+            if (nw > MAX || nh > MAX) {
+                var ratio = Math.min(MAX / nw, MAX / nh);
+                nw = Math.round(nw * ratio);
+                nh = Math.round(nh * ratio);
+            }
             var c = document.createElement('canvas');
-            c.width = img.naturalWidth || img.width;
-            c.height = img.naturalHeight || img.height;
-            c.getContext('2d').drawImage(img, 0, 0);
-            return c.toDataURL('image/jpeg', 0.9);
+            c.width = nw;
+            c.height = nh;
+            c.getContext('2d').drawImage(img, 0, 0, nw, nh);
+            return c.toDataURL('image/jpeg', 0.75);
         } catch (e) { return img.src; }
     };
 
@@ -402,9 +402,7 @@ APPLY_TABBED_LAYOUT = """
             if (v == null) return;
             if (typeof v === 'object') {
                 html += '<div style="margin-bottom:6px;"><b style="color:#5c7cfa;">' + k + '</b>';
-                if (v['参考图'] != null) html += '<div>参考图：' + String(v['参考图']) + '</div>';
-                if (v['生成图'] != null) html += '<div>生成图：' + String(v['生成图']) + '</div>';
-                if (v['差异'] != null) html += '<div style="color:#e0a030;">差异：' + String(v['差异']) + '</div>';
+                if (v['描述'] != null) html += '<div>' + String(v['描述']) + '</div>';
                 html += '</div>';
             } else {
                 html += '<div style="margin-bottom:4px;"><b style="color:#5c7cfa;">' + k + '：</b>' + String(v) + '</div>';
@@ -415,37 +413,128 @@ APPLY_TABBED_LAYOUT = """
 
     window.__ar3_ai_render = function(id, jsonStr) {
         window.__ar3_last_ai[id] = jsonStr;
-        if (typeof window.__ar3_refresh_fill_btns === 'function') window.__ar3_refresh_fill_btns();
-        var out = document.getElementById(id);
-        if (!out) return;
-        if (out.__ar3_btn) { out.__ar3_btn.disabled = false; out.__ar3_btn.style.opacity = '1'; }
-        _ar3_render_into(out, jsonStr);
+        var outs = document.querySelectorAll('.__ar3_ai_desc_out');
+        for (var oi = 0; oi < outs.length; oi++) {
+            _ar3_render_into(outs[oi], jsonStr);
+        }
+        var btns = document.querySelectorAll('.__ar3_ai_desc_btn');
+        for (var bi = 0; bi < btns.length; bi++) {
+            btns[bi].disabled = false;
+            btns[bi].style.opacity = '1';
+        }
+        var pushBtns = document.querySelectorAll('.__ar3_ai_push_btn');
+        for (var pi = 0; pi < pushBtns.length; pi++) {
+            pushBtns[pi].disabled = false;
+            pushBtns[pi].style.opacity = '1';
+            pushBtns[pi].style.background = '#0f3460';
+            pushBtns[pi].style.color = '#e0e0e0';
+            pushBtns[pi].style.border = '1px solid #5c7cfa';
+        }
     };
 
-    // Comparison button/output for one tab (参考图 vs that model图).
-    function _ar3_make_ai_cmp_row(letter, getRefImg, getModelImg) {
-        var reqId = '__ar3_ai_cmp_' + letter;
+    function _ar3_make_ai_desc_section(getRefImg) {
+        var AI_DESC_ID = '__ar3_ai_desc';
         var wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-top:6px;';
+
+        var btnWrap = document.createElement('div');
+        btnWrap.style.cssText = 'flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:3px;';
+
+        var modelLabel = document.createElement('span');
+        modelLabel.style.cssText = 'font-size:10px;color:#5c7cfa;white-space:nowrap;';
+        modelLabel.textContent = (window.__ar3_ai_model || 'glm-4.6v');
+        btnWrap.appendChild(modelLabel);
+
         var btn = document.createElement('button');
-        btn.textContent = 'AI对比';
-        btn.title = '同时上传参考图与模型图，用智谱AI(GLM-4.6V)对比两图差异';
+        btn.className = '__ar3_ai_desc_btn';
+        btn.textContent = 'AI描述';
+        btn.title = '上传参考图，用AI描述参考图主体的各维度特征';
         btn.style.cssText = 'flex-shrink:0;background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;';
-        var out = document.createElement('div');
-        out.id = reqId;
-        out.className = '__ar3_ai_out';
-        out.style.cssText = 'flex:1;min-width:0;font-size:12px;color:#a0a0b0;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto;line-height:1.5;';
-        out.__ar3_btn = btn;
-        if (window.__ar3_last_ai[reqId]) { _ar3_render_into(out, window.__ar3_last_ai[reqId]); }
-        btn.onclick = function() {
-            var refImg = getRefImg(), modImg = getModelImg();
-            var refRef = _ar3_grab_img(refImg), modRef = _ar3_grab_img(modImg);
-            if (!refRef || !modRef) { out.textContent = '缺少参考图或模型图'; return; }
-            out.style.color = '#a0a0b0'; out.textContent = 'AI对比中...';
-            btn.disabled = true; btn.style.opacity = '0.6';
-            window.__ar3_ai_queue.push({id: reqId, ref: refRef, model: modRef});
+        btnWrap.appendChild(btn);
+
+        var pushBtn = document.createElement('button');
+        pushBtn.className = '__ar3_ai_push_btn';
+        pushBtn.textContent = '推送AI';
+        pushBtn.title = '将AI描述内容推入所有模型各维度的参考图备注栏（已有内容不影响）';
+        pushBtn.disabled = true;
+        pushBtn.style.cssText = 'flex-shrink:0;background:#1a1a2e;color:#808090;border:1px solid #2a2a4a;border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12px;font-family:inherit;opacity:0.5;';
+        pushBtn.onclick = function() {
+            var result = window.__ar3_last_ai[AI_DESC_ID];
+            if (!result) return;
+            var data;
+            try { data = JSON.parse(result); } catch (e) { return; }
+            if (!data || data.error) return;
+            var count = 0;
+            Object.keys(evalByModel).forEach(function(letter) {
+                (evalByModel[letter] || []).forEach(function(dim) {
+                    if (!dim.__ar3_reasonInfo) return;
+                    var ri = dim.__ar3_reasonInfo;
+                    var dimIdx = parseInt((dim.__ar3_dimPrefix || '').split('-A')[1], 10);
+                    if (isNaN(dimIdx) || dimIdx < 0 || dimIdx >= _ar3_ai_order.length) return;
+                    var key = _ar3_ai_order[dimIdx];
+                    var obj = data[key];
+                    if (!obj || typeof obj !== 'object') return;
+                    var desc = obj['描述'];
+                    if (!desc || (ri.taA.value && ri.taA.value.trim())) return;
+                    ri.taA.value = desc;
+                    dim.__ar3_dirty = true;
+                    count++;
+                });
+            });
+            pushBtn.textContent = '推送AI ✓(' + count + ')';
+            pushBtn.style.background = '#0e7a3a';
+            pushBtn.style.color = '#e0e0e0';
+            setTimeout(function() {
+                pushBtn.textContent = '推送AI';
+                pushBtn.style.background = '#0f3460';
+                pushBtn.style.color = '#e0e0e0';
+                pushBtn.style.border = '1px solid #5c7cfa';
+            }, 2000);
         };
-        wrap.appendChild(btn);
+        btnWrap.appendChild(pushBtn);
+
+        var out = document.createElement('div');
+        out.className = '__ar3_ai_desc_out';
+        out.style.cssText = 'flex:1;min-width:0;font-size:12px;color:#a0a0b0;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto;line-height:1.5;';
+
+        if (window.__ar3_last_ai[AI_DESC_ID]) {
+            _ar3_render_into(out, window.__ar3_last_ai[AI_DESC_ID]);
+            pushBtn.disabled = false;
+            pushBtn.style.opacity = '1';
+            pushBtn.style.background = '#0f3460';
+            pushBtn.style.color = '#e0e0e0';
+            pushBtn.style.border = '1px solid #5c7cfa';
+        }
+
+        btn.onclick = function() {
+            var refImg = getRefImg();
+            var refRef = _ar3_grab_img(refImg);
+            if (!refRef) { out.textContent = '缺少参考图'; return; }
+            var allOuts = document.querySelectorAll('.__ar3_ai_desc_out');
+            var allBtns = document.querySelectorAll('.__ar3_ai_desc_btn');
+            var allPushBtns = document.querySelectorAll('.__ar3_ai_push_btn');
+            for (var i = 0; i < allOuts.length; i++) {
+                allOuts[i].style.color = '#a0a0b0';
+                allOuts[i].textContent = 'AI描述中...';
+            }
+            for (var j = 0; j < allBtns.length; j++) {
+                allBtns[j].disabled = true;
+                allBtns[j].style.opacity = '0.6';
+            }
+            for (var k = 0; k < allPushBtns.length; k++) {
+                allPushBtns[k].disabled = true;
+                allPushBtns[k].style.opacity = '0.5';
+                allPushBtns[k].textContent = '推送AI';
+                allPushBtns[k].style.background = '#1a1a2e';
+                allPushBtns[k].style.color = '#808090';
+                allPushBtns[k].style.border = '1px solid #2a2a4a';
+            }
+            var queueItem = {id: AI_DESC_ID, ref: refRef};
+            if (_ar3_preserve_text) queueItem.desc = _ar3_preserve_text;
+            window.__ar3_ai_queue.push(queueItem);
+        };
+
+        wrap.appendChild(btnWrap);
         wrap.appendChild(out);
         return wrap;
     }
@@ -671,6 +760,16 @@ APPLY_TABBED_LAYOUT = """
     modelLetters.sort();
 
     var tabs = {};
+
+    var _ar3_preserve_text = '';
+    try {
+        var pdContainer = document.getElementById('engine0_default_item_preserve_description');
+        if (pdContainer) {
+            var tc = pdContainer.querySelector('.text-content');
+            if (tc) _ar3_preserve_text = (tc.textContent || '').trim();
+        }
+    } catch (e) {}
+
     modelLetters.forEach(function(letter, idx) {
         var tabBtn = document.createElement('div');
         tabBtn.id = '__ar3_tab_btn_' + letter;
@@ -709,15 +808,6 @@ APPLY_TABBED_LAYOUT = """
         }
         refCol.appendChild(refBox);
 
-        // ---- Preserve-description block under the reference image ----
-        var _ar3_preserve_text = '';
-        try {
-            var pdContainer = document.getElementById('engine0_default_item_preserve_description');
-            if (pdContainer) {
-                var tc = pdContainer.querySelector('.text-content');
-                if (tc) _ar3_preserve_text = (tc.textContent || '').trim();
-            }
-        } catch (e) {}
         if (_ar3_preserve_text) {
             var pdBlock = document.createElement('div');
             pdBlock.style.cssText = 'margin-top:6px;padding:8px 10px;background:#16213e;border:1px solid #2a2a4a;border-radius:6px;font-size:12px;color:#a0a0b0;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow-y:auto;';
@@ -751,10 +841,9 @@ APPLY_TABBED_LAYOUT = """
             modelBox.appendChild(mi);
         }
         modelCol.appendChild(modelBox);
-        modelCol.appendChild(_ar3_make_ai_cmp_row(
-            letter,
-            (function(imgEl) { return function() { return imgEl; }; })(ri),
-            (function(imgEl) { return function() { return imgEl; }; })(mi)));
+        modelCol.appendChild(_ar3_make_ai_desc_section(function() {
+            return refItem ? refItem.querySelector('img.img') : null;
+        }));
         panel.appendChild(modelCol);
 
         // Column 3 — 评价
@@ -989,6 +1078,125 @@ APPLY_TABBED_LAYOUT = """
             fieldRowB.appendChild(lblB);
             fieldRowB.appendChild(taB);
 
+            var _ar3_a2_panel = null;
+            var _ar3_a2_depth_slider = null;
+            var _ar3_a2_vivid_slider = null;
+            var _ar3_a2_light_slider = null;
+            var _ar3_a2_color_input = null;
+            var _ar3_a2_extra_input = null;
+            var _ar3_a2_compose = function() {
+                if (dimIdx !== 2 || !_ar3_a2_panel) return;
+                var _depth = parseInt(_ar3_a2_depth_slider.value, 10);
+                var _vivid = parseInt(_ar3_a2_vivid_slider.value, 10);
+                var _light = parseInt(_ar3_a2_light_slider.value, 10);
+                var _color = (_ar3_a2_color_input.value || '').trim();
+                var _extra = (_ar3_a2_extra_input.value || '').trim();
+                var _activeIdx = (dim.__ar3_reasonInfo && dim.__ar3_reasonInfo.getActiveIdx) ? dim.__ar3_reasonInfo.getActiveIdx() : -1;
+                if (_activeIdx < 1 || _activeIdx > 3) return;
+                var _sev = _activeIdx;
+                var _texts = [];
+                var _deep = {
+                    dark: {1:'整体颜色较深',2:'整体颜色深',3:'整体颜色很深'},
+                    light:{1:'整体颜色较浅',2:'整体颜色浅',3:'整体颜色很浅'}
+                };
+                var _vividMap = {
+                    vivid:{1:'色彩较艳丽',2:'色彩艳丽',3:'色彩很艳丽'},
+                    soft:{1:'色彩较柔和',2:'色彩柔和',3:'色彩很柔和'}
+                };
+                var _lightMap = {
+                    bright:{1:'打光较亮',2:'打光亮',3:'打光很亮'},
+                    dark:{1:'打光较暗',2:'打光暗',3:'打光很暗'}
+                };
+                if (_depth === 0) { if (_deep.dark[_sev]) _texts.push(_deep.dark[_sev]); }
+                else if (_depth === 2) { if (_deep.light[_sev]) _texts.push(_deep.light[_sev]); }
+                if (_vivid === 0) { if (_vividMap.vivid[_sev]) _texts.push(_vividMap.vivid[_sev]); }
+                else if (_vivid === 2) { if (_vividMap.soft[_sev]) _texts.push(_vividMap.soft[_sev]); }
+                if (_light === 0) { if (_lightMap.bright[_sev]) _texts.push(_lightMap.bright[_sev]); }
+                else if (_light === 2) { if (_lightMap.dark[_sev]) _texts.push(_lightMap.dark[_sev]); }
+                if (_color) _texts.push('颜色偏' + _color);
+                var _result = _texts.length > 0 ? _texts.join('。') + '。' : '';
+                if (_extra) _result += _extra;
+                if (_result) { taB.value = _result; dim.__ar3_dirty = true; }
+            };
+            var _ar3_a2_make_panel = function() {
+                if (_ar3_a2_panel) return _ar3_a2_panel;
+                var p = document.createElement('div');
+                p.className = '__ar3_a2_panel';
+                p.style.cssText = 'display:none;margin-bottom:8px;padding:8px 10px;background:#12122a;border:1px solid #2a2a4a;border-radius:4px;font-size:12px;';
+
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:flex-end;gap:12px;';
+
+                var _make_column = function(label, leftLabel, rightLabel) {
+                    var col = document.createElement('div');
+                    col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+                    var labTop = document.createElement('span');
+                    labTop.textContent = label;
+                    labTop.style.cssText = 'color:#a0a0b0;font-size:11px;';
+                    col.appendChild(labTop);
+                    var s = document.createElement('input');
+                    s.type = 'range';
+                    s.min = '0'; s.max = '2'; s.value = '1'; s.step = '1';
+                    s.style.cssText = '-webkit-appearance:slider-vertical;writing-mode:bt-lr;width:18px;height:70px;accent-color:#e94560;cursor:pointer;margin:4px 0;';
+                    col.appendChild(s);
+                    var labBot = document.createElement('span');
+                    labBot.style.cssText = 'font-size:11px;color:#e0e0e0;white-space:nowrap;';
+                    s.addEventListener('input', function() {
+                        var v = parseInt(s.value, 10);
+                        labBot.textContent = v === 0 ? leftLabel : v === 2 ? rightLabel : '无';
+                        _ar3_a2_compose();
+                    });
+                    labBot.textContent = '无';
+                    col.appendChild(labBot);
+                    return {col: col, slider: s};
+                };
+
+                var _c1 = _make_column('深-浅', '深', '浅');
+                _ar3_a2_depth_slider = _c1.slider;
+                row.appendChild(_c1.col);
+
+                var _c2 = _make_column('艳-柔', '艳', '柔');
+                _ar3_a2_vivid_slider = _c2.slider;
+                row.appendChild(_c2.col);
+
+                var _c3 = _make_column('亮-暗', '亮', '暗');
+                _ar3_a2_light_slider = _c3.slider;
+                row.appendChild(_c3.col);
+
+                var colorCol = document.createElement('div');
+                colorCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+                var cl = document.createElement('span');
+                cl.textContent = '色彩';
+                cl.style.cssText = 'color:#a0a0b0;font-size:11px;';
+                colorCol.appendChild(cl);
+                _ar3_a2_color_input = document.createElement('input');
+                _ar3_a2_color_input.type = 'text';
+                _ar3_a2_color_input.placeholder = '红/蓝/绿';
+                _ar3_a2_color_input.style.cssText = 'width:58px;padding:3px 5px;font-size:11px;border:1px solid #2a2a4a;border-radius:4px;background:#1a1a2e;color:#e0e0e0;outline:none;font-family:inherit;text-align:center;';
+                _ar3_a2_color_input.addEventListener('input', _ar3_a2_compose);
+                colorCol.appendChild(_ar3_a2_color_input);
+                colorCol.appendChild(document.createElement('span'));
+                row.appendChild(colorCol);
+
+                var extraCol = document.createElement('div');
+                extraCol.style.cssText = 'display:flex;flex-direction:column;flex:1;gap:2px;';
+                var el = document.createElement('span');
+                el.textContent = '额外说明';
+                el.style.cssText = 'color:#a0a0b0;font-size:11px;';
+                extraCol.appendChild(el);
+                _ar3_a2_extra_input = document.createElement('input');
+                _ar3_a2_extra_input.type = 'text';
+                _ar3_a2_extra_input.placeholder = '追加文字到描述末尾';
+                _ar3_a2_extra_input.style.cssText = 'width:100%;padding:3px 6px;font-size:11px;border:1px solid #2a2a4a;border-radius:4px;background:#1a1a2e;color:#e0e0e0;outline:none;font-family:inherit;';
+                _ar3_a2_extra_input.addEventListener('input', _ar3_a2_compose);
+                extraCol.appendChild(_ar3_a2_extra_input);
+                row.appendChild(extraCol);
+
+                p.appendChild(row);
+                _ar3_a2_panel = p;
+                return p;
+            };
+
             // ---- Consolidated 5-button row ----
             var sevRow = document.createElement('div');
             sevRow.style.cssText = 'display:flex;gap:4px;';
@@ -1084,25 +1292,7 @@ APPLY_TABBED_LAYOUT = """
             dimHeader.appendChild(sliderWrap);
             _ar3_apply_adj();
 
-            // Fill taA/taB from the AI comparison result (nested per-dimension object
-            // with 参考图/生成图 fields). emptyOnly: keep existing text; skipHidden: only
-            // act when the reason box is visible (used by auto-fill on tab switch).
-            var _ar3_fill_from_ai = function(emptyOnly, skipHidden) {
-                if (skipHidden && reasonBox.style.display === 'none') return false;
-                var key = _ar3_ai_order[dimIdx];
-                if (!key) return false;
-                var cmp = _ar3_get_ai('__ar3_ai_cmp_' + letter);
-                var obj = cmp ? cmp[key] : null;
-                if (!obj || typeof obj !== 'object') return false;
-                var did = false;
-                if (obj['参考图'] != null && (!emptyOnly || !taA.value)) { taA.value = obj['参考图']; did = true; }
-                if (obj['生成图'] != null && (!emptyOnly || !taB.value)) { taB.value = obj['生成图']; did = true; }
-                if (did) dim.__ar3_dirty = true;
-                return did;
-            };
-
-            var _ar3_set_active = function(idx, noPropagate) {
-                // Guard against recursive re-entry from sync observer
+            var _ar3_set_active = function(idx, noPropagate) {                // Guard against recursive re-entry from sync observer
                 if (dim.__ar3_settingActive) return;
                 dim.__ar3_settingActive = true;
 
@@ -1136,6 +1326,11 @@ APPLY_TABBED_LAYOUT = """
                 // Show/hide reason box (hidden for 一致 and 不适用)
                 var showReason = (def.value === '不一致');
                 reasonBox.style.display = showReason ? 'block' : 'none';
+                if (_ar3_a2_panel) {
+                    var _a2On = window.__ar3_auto_fill_a2 && dimIdx === 2;
+                    fieldRowB.style.display = (_a2On && showReason) ? 'none' : (showReason ? '' : 'none');
+                    _ar3_a2_panel.style.display = (_a2On && showReason) ? 'block' : 'none';
+                }
 
                 // Update button styles
                 sevBtns.forEach(function(b, i) {
@@ -1144,6 +1339,20 @@ APPLY_TABBED_LAYOUT = """
                     b.style.background = sel ? '#3a1a2e' : '#1a1a2e';
                     b.style.color = sel ? '#e94560' : '#a0a0b0';
                 });
+
+                if (idx >= 1 && idx <= 3 && taB && !taB.value.trim()) {
+                    var _fillMap = {
+                        0: {enabled: 'auto_fill_model', texts: {1: '商品款式有所不同', 2: '商品款式不同', 3: '商品款式完全不同'}},
+                        3: {enabled: 'auto_fill_a3', texts: {1: '图案有轻微差异', 2: '图案不一致和扭曲', 3: '图案缺失和严重不同'}},
+                        4: {enabled: 'auto_fill_a4', texts: {1: '文字有轻微差异', 2: '文字不一致和扭曲', 3: '文字缺失和严重不同'}}
+                    };
+                    var _fm = _fillMap[dimIdx];
+                    if (_fm && window['__ar3_' + _fm.enabled]) {
+                        var _txt = _fm.texts[idx];
+                        if (_txt) { taB.value = _txt; dim.__ar3_dirty = true; }
+                    }
+                }
+                if (window.__ar3_auto_fill_a2 && dimIdx === 2 && typeof _ar3_a2_compose === 'function') _ar3_a2_compose();
 
                 // Compose: clear for 一致/不适用, write text for 轻度/中度/重度
                 // Delay to let iView's async tick create/remove the contenteditable div
@@ -1264,6 +1473,7 @@ APPLY_TABBED_LAYOUT = """
             inputsWrap.appendChild(inputsCol);
 
             reasonBox.appendChild(inputsWrap);
+            reasonBox.appendChild(_ar3_a2_make_panel());
             card.appendChild(sevRow);
             card.appendChild(reasonBox);
 
@@ -1294,8 +1504,13 @@ APPLY_TABBED_LAYOUT = """
             // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
             var initShow = (btnDefs[Math.max(0, activeIdx)].value === '不一致');
             reasonBox.style.display = initShow ? 'block' : 'none';
+            if (_ar3_a2_panel) {
+                var _a2OnInit = window.__ar3_auto_fill_a2 && dimIdx === 2;
+                fieldRowB.style.display = (_a2OnInit && initShow) ? 'none' : (initShow ? '' : 'none');
+                _ar3_a2_panel.style.display = (_a2OnInit && initShow) ? 'block' : 'none';
+            }
 
-            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, fillFromAi: _ar3_fill_from_ai, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
+            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
 
             rightSide.appendChild(card);
         });
@@ -1424,10 +1639,6 @@ APPLY_TABBED_LAYOUT = """
         tabs[letter].panel.style.display = 'flex';
         if (!keepFocus) _ar3_focus_dim_idx = 0;
 
-        // Auto-fill this tab's visible inputs from AI results (empty fields only)
-        (evalByModel[letter] || []).forEach(function(d) {
-            if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.fillFromAi) d.__ar3_reasonInfo.fillFromAi(true, true);
-        });
         _ar3_highlight_focus();
         _ar3_refresh_rank_highlight();
     }

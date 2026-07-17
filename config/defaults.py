@@ -9,13 +9,18 @@ DEFAULT_CONFIG = {
     "api": {
         "base_url": "",
         "api_key": "",
-        "timeout": 30
+        "timeout": 30,
+        "ai_model": "glm-4.6v"
     },
     "recognition": {
         "auto_restructure": True,
         "debounce_ms": 500
     },
     "sort_scheme": "inconsistency",
+    "auto_fill_model": False,
+    "auto_fill_a3": False,
+    "auto_fill_a4": False,
+    "auto_fill_a2": False,
     "slider_mode": "multi",
     "slider_multi": [0.1, 0.5, 1.0, 2.0, 10.0],
     "slider_add": [30, 10, 0, -10, -30],
