@@ -477,7 +477,7 @@ APPLY_TABBED_LAYOUT = """
                     var desc = obj['描述'];
                     if (!desc || (ri.taA.value && ri.taA.value.trim())) return;
                     ri.taA.value = desc;
-                    dim.__ar3_dirty = true;
+                    if (typeof _ar3_mark_dim_dirty === 'function') _ar3_mark_dim_dirty(dim);
                     count++;
                 });
             });
@@ -691,6 +691,7 @@ APPLY_TABBED_LAYOUT = """
     };
 
     var _ar3_do_sort = function() {
+        if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
         var scheme = window.__ar3_sort_scheme || 'score';
         var scored = modelLetters.map(function(L) {
             return {
@@ -769,6 +770,14 @@ APPLY_TABBED_LAYOUT = """
             if (tc) _ar3_preserve_text = (tc.textContent || '').trim();
         }
     } catch (e) {}
+
+    window.__ar3_dirty_models = new Set();
+    var _ar3_mark_dim_dirty = function(d) {
+        d.__ar3_dirty = true;
+        var prefix = d.__ar3_dimPrefix || '';
+        var m = prefix.match(/^([A-H])-/);
+        if (m) window.__ar3_dirty_models.add(m[1]);
+    };
 
     modelLetters.forEach(function(letter, idx) {
         var tabBtn = document.createElement('div');
@@ -866,8 +875,8 @@ APPLY_TABBED_LAYOUT = """
         // of this model into the original page in one click (replaces per-dim 确定).
         var submitBtn = document.createElement('button');
         submitBtn.className = '__ar3_submit_btn';
-        submitBtn.textContent = '提交本页';
-        submitBtn.title = '将本模型所有维度的内容一次性填入原页面 (Ctrl+Enter)';
+        submitBtn.textContent = '提交全部';
+        submitBtn.title = '将所有已编辑标签的修改一次性填入原页面 (Ctrl+Enter)';
         submitBtn.style.cssText = 'background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;white-space:nowrap;';
 
         var scoreBadge = document.createElement('div');
@@ -897,7 +906,13 @@ APPLY_TABBED_LAYOUT = """
 
         var _ar3_update_progress = function() {
             var done = 0;
-            dims.forEach(function(d) { if (_ar3_dim_done(d)) done++; });
+            dims.forEach(function(d) {
+                var isDone = _ar3_dim_done(d);
+                if (isDone) done++;
+                if (d.__ar3_card) {
+                    d.__ar3_card.style.borderRight = isDone ? 'none' : '3px solid #e0a030';
+                }
+            });
             var total = dims.length;
             progressLabel.textContent = '已填 ' + done + '/' + total;
             progressLabel.style.color = (done === total && total > 0) ? '#0e9a4a' : '#e0a030';
@@ -926,20 +941,21 @@ APPLY_TABBED_LAYOUT = """
         };
 
         submitBtn.onclick = function() {
-            dims.forEach(function(d) {
-                if (!d.__ar3_reasonInfo || !d.__ar3_reasonInfo.submit) return;
-                d.__ar3_reasonInfo.submit();
-                d.__ar3_dirty = false;
+            if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
+            var totalDone = 0, totalAll = 0;
+            Object.keys(tabs).forEach(function(l) {
+                var st = (tabs[l].updateProgress && tabs[l].updateProgress()) || {done: 0, total: 5};
+                totalDone += st.done;
+                totalAll += st.total;
             });
-            var st = _ar3_update_progress();
-            if (st.done < st.total) {
-                submitBtn.textContent = '已提交(缺' + (st.total - st.done) + ')';
+            if (totalDone < totalAll) {
+                submitBtn.textContent = '已提交(缺' + (totalAll - totalDone) + ')';
                 submitBtn.style.background = '#7a5a0e';
             } else {
                 submitBtn.textContent = '已提交';
                 submitBtn.style.background = '#0e7a3a';
             }
-            setTimeout(function() { submitBtn.textContent = '提交本页'; submitBtn.style.background = '#0f3460'; }, 1200);
+            setTimeout(function() { submitBtn.textContent = '提交全部'; submitBtn.style.background = '#0f3460'; }, 1200);
         };
 
         dims.forEach(function(dim) {
@@ -1116,7 +1132,7 @@ APPLY_TABBED_LAYOUT = """
                 if (_color) _texts.push('颜色偏' + _color);
                 var _result = _texts.length > 0 ? _texts.join('。') + '。' : '';
                 if (_extra) _result += _extra;
-                if (_result) { taB.value = _result; dim.__ar3_dirty = true; }
+                if (_result) { taB.value = _result; _ar3_mark_dim_dirty(dim); _ar3_update_progress(); }
             };
             var _ar3_a2_make_panel = function() {
                 if (_ar3_a2_panel) return _ar3_a2_panel;
@@ -1349,7 +1365,7 @@ APPLY_TABBED_LAYOUT = """
                     var _fm = _fillMap[dimIdx];
                     if (_fm && window['__ar3_' + _fm.enabled]) {
                         var _txt = _fm.texts[idx];
-                        if (_txt) { taB.value = _txt; dim.__ar3_dirty = true; }
+                        if (_txt) { taB.value = _txt; if (typeof _ar3_mark_dim_dirty === 'function') _ar3_mark_dim_dirty(dim); }
                     }
                 }
                 if (window.__ar3_auto_fill_a2 && dimIdx === 2 && typeof _ar3_a2_compose === 'function') _ar3_a2_compose();
@@ -1422,7 +1438,7 @@ APPLY_TABBED_LAYOUT = """
                             var mm = (other.__ar3_dimPrefix || '').match(/(\\d+)$/);
                             if (mm && parseInt(mm[1], 10) === dimIdx && other.__ar3_reasonInfo) {
                                 var ta = other.__ar3_reasonInfo.taA;
-                                if (ta && !ta.value) { ta.value = text; other.__ar3_dirty = true; count++; }
+                                if (ta && !ta.value) { ta.value = text; _ar3_mark_dim_dirty(other); count++; }
                             }
                         });
                     });
@@ -1451,7 +1467,7 @@ APPLY_TABBED_LAYOUT = """
                             var mm = (other.__ar3_dimPrefix || '').match(/(\\d+)$/);
                             if (mm && parseInt(mm[1], 10) === dimIdx && other.__ar3_reasonInfo) {
                                 var ta = other.__ar3_reasonInfo.taA;
-                                if (ta) { ta.value = text; other.__ar3_dirty = true; count++; }
+                                if (ta) { ta.value = text; _ar3_mark_dim_dirty(other); count++; }
                             }
                         });
                     });
@@ -1482,12 +1498,12 @@ APPLY_TABBED_LAYOUT = """
             // write->observer->overwrite loop that was interrupting input).
             // During IME composition, defer progress/label updates to compositionend
             // to avoid DOM writes interfering with the IME session.
-            taA.addEventListener('input', function() { dim.__ar3_dirty = true; if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
-            taB.addEventListener('input', function() { dim.__ar3_dirty = true; if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taA.addEventListener('input', function() { _ar3_mark_dim_dirty(dim); if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
+            taB.addEventListener('input', function() { _ar3_mark_dim_dirty(dim); if (!dim.__ar3_composing && typeof _ar3_update_progress === 'function') _ar3_update_progress(); });
             taA.addEventListener('compositionstart', function() { dim.__ar3_composing = true; window.__ar3_ime_until = Date.now() + 120000; });
             taA.addEventListener('compositionend', function() {
                 dim.__ar3_composing = false;
-                dim.__ar3_dirty = true;
+                _ar3_mark_dim_dirty(dim);
                 dim.__ar3_compose_cool = Date.now() + 200;
                 window.__ar3_ime_until = Date.now() + 200;
                 if (typeof _ar3_update_progress === 'function') _ar3_update_progress();
@@ -1495,7 +1511,7 @@ APPLY_TABBED_LAYOUT = """
             taB.addEventListener('compositionstart', function() { dim.__ar3_composing = true; window.__ar3_ime_until = Date.now() + 120000; });
             taB.addEventListener('compositionend', function() {
                 dim.__ar3_composing = false;
-                dim.__ar3_dirty = true;
+                _ar3_mark_dim_dirty(dim);
                 dim.__ar3_compose_cool = Date.now() + 200;
                 window.__ar3_ime_until = Date.now() + 200;
                 if (typeof _ar3_update_progress === 'function') _ar3_update_progress();
@@ -1631,6 +1647,7 @@ APPLY_TABBED_LAYOUT = """
 
     function _ar3_activate_tab(letter, keepFocus) {
         if (!tabs[letter]) return;
+        if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
         _ar3_active_letter = letter;
         Object.keys(tabs).forEach(function(l) {
             tabs[l].panel.style.display = 'none';
@@ -1662,13 +1679,7 @@ APPLY_TABBED_LAYOUT = """
 
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
             e.preventDefault();
-            var t = tabs[_ar3_active_letter];
-            if (t && t.dims) {
-                t.dims.forEach(function(d) {
-                    if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
-                });
-                if (t.updateProgress) t.updateProgress();
-            }
+            if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
             return;
         }
 
@@ -1877,11 +1888,13 @@ APPLY_TABBED_LAYOUT = """
 
     // Submit EVERY tab's dimensions into the original page (used on 返回原页面/解析).
     window.__ar3_submit_all = function() {
-        Object.keys(tabs).forEach(function(l) {
+        if (window.__ar3_dirty_models.size === 0) return;
+        window.__ar3_dirty_models.forEach(function(l) {
             (tabs[l].dims || []).forEach(function(d) {
                 if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
             });
         });
+        window.__ar3_dirty_models.clear();
     };
 
     if (_ar3_active_letter) { _ar3_activate_tab(_ar3_active_letter, true); }
