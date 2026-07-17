@@ -1143,39 +1143,35 @@ APPLY_TABBED_LAYOUT = """
                 var row = document.createElement('div');
                 row.style.cssText = 'display:flex;align-items:flex-end;gap:12px;';
 
-                var _make_column = function(label, leftLabel, rightLabel) {
+                var _make_column = function(leftLabel, rightLabel) {
                     var col = document.createElement('div');
                     col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
                     var labTop = document.createElement('span');
-                    labTop.textContent = label;
-                    labTop.style.cssText = 'color:#a0a0b0;font-size:11px;';
+                    labTop.textContent = leftLabel;
+                    labTop.style.cssText = 'color:#e0e0e0;font-size:11px;font-weight:bold;';
                     col.appendChild(labTop);
                     var s = document.createElement('input');
                     s.type = 'range';
                     s.min = '0'; s.max = '2'; s.value = '1'; s.step = '1';
                     s.style.cssText = '-webkit-appearance:slider-vertical;writing-mode:bt-lr;width:18px;height:70px;accent-color:#e94560;cursor:pointer;margin:4px 0;';
+                    s.addEventListener('input', _ar3_a2_compose);
                     col.appendChild(s);
                     var labBot = document.createElement('span');
-                    labBot.style.cssText = 'font-size:11px;color:#e0e0e0;white-space:nowrap;';
-                    s.addEventListener('input', function() {
-                        var v = parseInt(s.value, 10);
-                        labBot.textContent = v === 0 ? leftLabel : v === 2 ? rightLabel : '无';
-                        _ar3_a2_compose();
-                    });
-                    labBot.textContent = '无';
+                    labBot.textContent = rightLabel;
+                    labBot.style.cssText = 'color:#a0a0b0;font-size:11px;font-weight:bold;';
                     col.appendChild(labBot);
                     return {col: col, slider: s};
                 };
 
-                var _c1 = _make_column('深-浅', '深', '浅');
+                var _c1 = _make_column('深', '浅');
                 _ar3_a2_depth_slider = _c1.slider;
                 row.appendChild(_c1.col);
 
-                var _c2 = _make_column('艳-柔', '艳', '柔');
+                var _c2 = _make_column('艳', '柔');
                 _ar3_a2_vivid_slider = _c2.slider;
                 row.appendChild(_c2.col);
 
-                var _c3 = _make_column('亮-暗', '亮', '暗');
+                var _c3 = _make_column('亮', '暗');
                 _ar3_a2_light_slider = _c3.slider;
                 row.appendChild(_c3.col);
 
@@ -1203,7 +1199,7 @@ APPLY_TABBED_LAYOUT = """
                 _ar3_a2_extra_input = document.createElement('input');
                 _ar3_a2_extra_input.type = 'text';
                 _ar3_a2_extra_input.placeholder = '追加文字到描述末尾';
-                _ar3_a2_extra_input.style.cssText = 'width:100%;padding:3px 6px;font-size:11px;border:1px solid #2a2a4a;border-radius:4px;background:#1a1a2e;color:#e0e0e0;outline:none;font-family:inherit;';
+                _ar3_a2_extra_input.style.cssText = 'width:100%;padding:5px 8px;font-size:12px;min-height:28px;border:1px solid #2a2a4a;border-radius:4px;background:#1a1a2e;color:#e0e0e0;outline:none;font-family:inherit;';
                 _ar3_a2_extra_input.addEventListener('input', _ar3_a2_compose);
                 extraCol.appendChild(_ar3_a2_extra_input);
                 row.appendChild(extraCol);
