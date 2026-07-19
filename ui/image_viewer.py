@@ -172,6 +172,7 @@ class ImageViewerDialog(QDialog):
         vp = self._scroll.viewport()
         vp.installEventFilter(self)
         self._panning = False
+        self._pan_button = None
         self._pan_origin = QPoint()
 
         self._fetch_image()
@@ -233,10 +234,11 @@ class ImageViewerDialog(QDialog):
                 self._scale = max(getattr(self, '_min_scale', 0.1), min(self._scale, 20.0))
                 self._apply_scale()
             return True
-        # Pointer drag on the image → pan (move scrollbars).
+        # Pointer drag on the image → pan (move scrollbars); left or right button.
         if t == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton:
+            if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
                 self._panning = True
+                self._pan_button = event.button()
                 self._pan_origin = event.globalPosition().toPoint()
                 self._pan_scroll_start = QPoint(
                     self._scroll.horizontalScrollBar().value(),
@@ -251,8 +253,12 @@ class ImageViewerDialog(QDialog):
                 max(0, self._pan_scroll_start.y() - delta.y()))
             return True
         if t == QEvent.Type.MouseButtonRelease and self._panning:
-            self._panning = False
-            self._scroll.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            if event.button() == getattr(self, '_pan_button', event.button()):
+                self._panning = False
+                self._scroll.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            return True
+        # Suppress the context menu so right-drag stays a pure pan gesture.
+        if t == QEvent.Type.ContextMenu:
             return True
         return super().eventFilter(obj, event)
 

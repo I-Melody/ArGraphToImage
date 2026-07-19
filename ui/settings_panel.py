@@ -16,6 +16,7 @@ from config import manager as config
 
 
 class SettingsPanel(QWidget):
+    parse_mode_changed = pyqtSignal(str)
     sort_scheme_changed = pyqtSignal(str)
     scores_changed = pyqtSignal(dict)
     slider_changed = pyqtSignal(dict)
@@ -44,10 +45,51 @@ class SettingsPanel(QWidget):
             }
         """
 
+    def _radio_style(self):
+        return """
+            QRadioButton {
+                color: #e0e0e0; font-size: 12px; padding: 2px;
+            }
+            QRadioButton::indicator {
+                width: 14px; height: 14px;
+                border: 2px solid #5c7cfa;
+                border-radius: 8px;
+                background: #12122a;
+            }
+            QRadioButton::indicator:checked {
+                background: #e94560;
+                border-color: #e94560;
+            }
+            QRadioButton::indicator:hover {
+                border-color: #a0b0ff;
+            }
+        """
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
+
+        # ---- Parse mode ----
+        mode_group = QGroupBox("解析方式")
+        mode_group.setStyleSheet(self._group_style())
+        mode_layout = QVBoxLayout(mode_group)
+        mode_layout.setSpacing(6)
+
+        self.mode_group_btns = QButtonGroup(self)
+        self.radio_mode_tabbed = QRadioButton("标签页模式")
+        self.radio_mode_tabbed.setToolTip("按模型分标签页展示，含评价栏、排序、AI等完整功能")
+        self.radio_mode_tiled = QRadioButton("平铺模式")
+        self.radio_mode_tiled.setToolTip("仅将参考图与各模型图平铺展示")
+        for rb in (self.radio_mode_tabbed, self.radio_mode_tiled):
+            rb.setStyleSheet(self._radio_style())
+        self.mode_group_btns.addButton(self.radio_mode_tabbed, 0)
+        self.mode_group_btns.addButton(self.radio_mode_tiled, 1)
+        mode_layout.addWidget(self.radio_mode_tabbed)
+        mode_layout.addWidget(self.radio_mode_tiled)
+        self.mode_group_btns.buttonClicked.connect(self._on_parse_mode_changed)
+
+        layout.addWidget(mode_group)
 
         # ---- Sort scheme ----
         sort_group = QGroupBox("排序方案")
@@ -61,24 +103,7 @@ class SettingsPanel(QWidget):
         self.radio_incons = QRadioButton("不一致数量优先")
         self.radio_incons.setToolTip("按不一致维度数量从少到多排序（少者靠前，平局比总分）")
         for rb in (self.radio_score, self.radio_incons):
-            rb.setStyleSheet("""
-                QRadioButton {
-                    color: #e0e0e0; font-size: 12px; padding: 2px;
-                }
-                QRadioButton::indicator {
-                    width: 14px; height: 14px;
-                    border: 2px solid #5c7cfa;
-                    border-radius: 8px;
-                    background: #12122a;
-                }
-                QRadioButton::indicator:checked {
-                    background: #e94560;
-                    border-color: #e94560;
-                }
-                QRadioButton::indicator:hover {
-                    border-color: #a0b0ff;
-                }
-            """)
+            rb.setStyleSheet(self._radio_style())
         self.sort_group_btns.addButton(self.radio_score, 0)
         self.sort_group_btns.addButton(self.radio_incons, 1)
         sort_layout.addWidget(self.radio_score)
@@ -217,6 +242,11 @@ class SettingsPanel(QWidget):
         """
 
     def _load_from_config(self):
+        parse_mode = config.get("parse_mode", "tabbed")
+        if parse_mode == "tiled":
+            self.radio_mode_tiled.setChecked(True)
+        else:
+            self.radio_mode_tabbed.setChecked(True)
         scheme = config.get("sort_scheme", "inconsistency")
         if scheme == "inconsistency":
             self.radio_incons.setChecked(True)
@@ -236,6 +266,13 @@ class SettingsPanel(QWidget):
         for i in range(5):
             self.slider_spins_multi[i].setValue(float(multi_vals[i]) if i < len(multi_vals) else 1.0)
             self.slider_spins_add[i].setValue(int(add_vals[i]) if i < len(add_vals) else 0)
+
+    def _on_parse_mode_changed(self):
+        mode = "tiled" if self.radio_mode_tiled.isChecked() else "tabbed"
+        cfg = config.load()
+        cfg["parse_mode"] = mode
+        config.save(cfg)
+        self.parse_mode_changed.emit(mode)
 
     def _on_sort_changed(self):
         scheme = "inconsistency" if self.radio_incons.isChecked() else "score"

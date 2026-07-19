@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self._adjuster = LayoutAdjuster(self._injector)
         self._assistant_panel = AssistantPanel(self)
         self._settings_panel = SettingsPanel(self)
+        self._settings_panel.parse_mode_changed.connect(self._on_parse_mode_changed)
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._settings_panel.scores_changed.connect(self._on_scores_changed)
         self._settings_panel.slider_changed.connect(self._on_slider_changed)
@@ -247,7 +248,8 @@ class MainWindow(QMainWindow):
         self._redetect_timer.start()
 
     def _refresh_recognition(self):
-        self._auto_apply_after_detect = False
+        if self._auto_apply_after_detect:
+            return
         self._injector.detect_page_structure()
 
     def _on_info_clicked(self):
@@ -296,6 +298,11 @@ class MainWindow(QMainWindow):
         self.browser().page().runJavaScript(f"window.__ar3_auto_fill_a2 = {json.dumps(enabled)};")
         self._status_bar.showMessage("A2 色调滑杆已" + ("开启" if enabled else "关闭"))
         _log.info(f"Auto-fill A2: {enabled}")
+
+    def _on_parse_mode_changed(self, mode):
+        self._status_bar.showMessage(
+            "解析方式：平铺模式" if mode == "tiled" else "解析方式：标签页模式")
+        _log.info(f"Parse mode changed: {mode}")
 
     def _on_sort_scheme_changed(self, scheme):
         js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
@@ -364,7 +371,7 @@ class MainWindow(QMainWindow):
 
     def _on_parse_clicked(self):
         self.browser().page().runJavaScript(
-            "!!document.getElementById('__ar3_tab_overlay')",
+            "!!(document.getElementById('__ar3_tab_overlay') || document.getElementById('__ar3_tile_overlay'))",
             self._on_parse_state_checked)
 
     def _on_parse_state_checked(self, overlay_open):
@@ -372,6 +379,7 @@ class MainWindow(QMainWindow):
             _log.info("Parse toggle: removing overlay")
             self._adjuster.remove_layout()
             self._browser_panel.set_url_bar_visible(True)
+            self._ai_timer_stop()
             self._status_bar.showMessage("已返回原页面")
             return
         _log.info("Parse toggle: detecting + applying layout")
@@ -389,6 +397,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(f"解析失败: {reason}")
         event_bus.recognition_error.emit(reason)
         if self._auto_apply_after_detect:
+            self._auto_apply_after_detect = False
             QMessageBox.warning(self, "解析失败", f"无法解析页面:\n{reason}\n\n请确认已打开标注工作页面。")
 
     def _on_page_detected(self, data):
@@ -405,9 +414,10 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(f"解析完成: {result.model_count}个模型, {result.dimension_count}个维度")
 
         if self._auto_apply_after_detect and result.matched and result.model_count > 0:
-            _log.info("Auto-applying layout after detection")
+            mode = config.get("parse_mode", "tabbed")
+            _log.info(f"Auto-applying layout after detection (mode={mode})")
             try:
-                self._adjuster.apply_tabbed_layout()
+                self._adjuster.apply_layout(mode)
             except Exception as e:
                 _log.exception("Layout apply failed")
                 self._status_bar.showMessage(f"布局失败: {e}")
@@ -422,12 +432,17 @@ class MainWindow(QMainWindow):
             return
         event_bus.layout_restructured.emit(result)
         status = result.get("status", "unknown")
-        _log.info(f"Layout applied: status={status}, count={result.get('count', 0)}")
+        mode = result.get("mode", "tabbed")
+        _log.info(f"Layout applied: status={status}, mode={mode}, count={result.get('count', 0)}")
         if status == "transformed":
             self._browser_panel.set_url_bar_visible(False)
-            self._inject_all_config()
-            self._ai_timer_start()
-            self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
+            if mode == "tiled":
+                self._ai_timer_start()
+                self._status_bar.showMessage(f"平铺窗口已打开: {result.get('count', 0)} 个模型图")
+            else:
+                self._inject_all_config()
+                self._ai_timer_start()
+                self._status_bar.showMessage(f"作业窗口已打开: {result.get('count', 0)} 个标签页")
         elif status == "already_transformed":
             self._status_bar.showMessage("作业窗口已存在")
         elif status == "no_grid_found":

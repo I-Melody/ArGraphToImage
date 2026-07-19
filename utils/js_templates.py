@@ -392,8 +392,11 @@ APPLY_TABBED_LAYOUT = """
     };
 
     function _ar3_render_into(out, jsonStr) {
+        var s = (typeof jsonStr === 'string') ? jsonStr : '';
+        // Defensive strip: remove markdown fence markers if Python _extract_json failed.
+        s = s.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
         var res;
-        try { res = JSON.parse(jsonStr); } catch (e) { res = {error: '返回解析失败'}; }
+        try { res = JSON.parse(s); } catch (e) { res = {error: '返回解析失败'}; }
         if (res && res.error) { out.textContent = 'AI失败：' + res.error; out.style.color = '#e94560'; return; }
         out.style.color = '#a0a0b0';
         var html = '';
@@ -1098,6 +1101,7 @@ APPLY_TABBED_LAYOUT = """
             var _ar3_a2_depth_slider = null;
             var _ar3_a2_vivid_slider = null;
             var _ar3_a2_light_slider = null;
+            var _ar3_a2_warmth_slider = null;
             var _ar3_a2_color_input = null;
             var _ar3_a2_extra_input = null;
             var _ar3_a2_compose = function() {
@@ -1105,6 +1109,7 @@ APPLY_TABBED_LAYOUT = """
                 var _depth = parseInt(_ar3_a2_depth_slider.value, 10);
                 var _vivid = parseInt(_ar3_a2_vivid_slider.value, 10);
                 var _light = parseInt(_ar3_a2_light_slider.value, 10);
+                var _warmth = parseInt(_ar3_a2_warmth_slider.value, 10);
                 var _color = (_ar3_a2_color_input.value || '').trim();
                 var _extra = (_ar3_a2_extra_input.value || '').trim();
                 var _activeIdx = (dim.__ar3_reasonInfo && dim.__ar3_reasonInfo.getActiveIdx) ? dim.__ar3_reasonInfo.getActiveIdx() : -1;
@@ -1123,12 +1128,18 @@ APPLY_TABBED_LAYOUT = """
                     bright:{1:'打光较亮',2:'打光亮',3:'打光很亮'},
                     dark:{1:'打光较暗',2:'打光暗',3:'打光很暗'}
                 };
+                var _warmthMap = {
+                    cool:{1:'色调轻度偏冷',2:'色调偏冷',3:'色调明显偏冷'},
+                    warm:{1:'色调轻度偏暖',2:'色调偏暖',3:'色调明显偏暖'}
+                };
                 if (_depth === 0) { if (_deep.dark[_sev]) _texts.push(_deep.dark[_sev]); }
                 else if (_depth === 2) { if (_deep.light[_sev]) _texts.push(_deep.light[_sev]); }
                 if (_vivid === 0) { if (_vividMap.vivid[_sev]) _texts.push(_vividMap.vivid[_sev]); }
                 else if (_vivid === 2) { if (_vividMap.soft[_sev]) _texts.push(_vividMap.soft[_sev]); }
                 if (_light === 0) { if (_lightMap.bright[_sev]) _texts.push(_lightMap.bright[_sev]); }
                 else if (_light === 2) { if (_lightMap.dark[_sev]) _texts.push(_lightMap.dark[_sev]); }
+                if (_warmth === 0) { if (_warmthMap.cool[_sev]) _texts.push(_warmthMap.cool[_sev]); }
+                else if (_warmth === 2) { if (_warmthMap.warm[_sev]) _texts.push(_warmthMap.warm[_sev]); }
                 if (_color) _texts.push('颜色偏' + _color);
                 var _result = _texts.length > 0 ? _texts.join('。') + '。' : '';
                 if (_extra) _result += _extra;
@@ -1174,6 +1185,10 @@ APPLY_TABBED_LAYOUT = """
                 var _c3 = _make_column('亮', '暗');
                 _ar3_a2_light_slider = _c3.slider;
                 row.appendChild(_c3.col);
+
+                var _c4 = _make_column('冷', '暖');
+                _ar3_a2_warmth_slider = _c4.slider;
+                row.appendChild(_c4.col);
 
                 var colorCol = document.createElement('div');
                 colorCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
@@ -1915,6 +1930,263 @@ REMOVE_TABBED_LAYOUT = """
             clearTimeout(_ar3_sync_timer);
             _ar3_sync_timer = null;
         }
+        return 'removed';
+    }
+    return 'not_found';
+})();
+"""
+
+APPLY_TILED_LAYOUT = """
+(function() {
+    if (document.getElementById('__ar3_tile_overlay') || document.getElementById('__ar3_tab_overlay')) {
+        return JSON.stringify({status: 'already_transformed', mode: 'tiled', count: 0});
+    }
+
+    var gridItems = document.querySelectorAll('.grid-item[id*="content_engine"]');
+    if (gridItems.length === 0) {
+        return JSON.stringify({status: 'no_grid_found', mode: 'tiled', count: 0});
+    }
+
+    var refItem = null, modelItems = [];
+    gridItems.forEach(function(item) {
+        if (item.id.indexOf('ref_image') >= 0) refItem = item;
+        else if (item.id.indexOf('model_') >= 0) modelItems.push(item);
+    });
+
+    function queuePopup(key, src) {
+        if (!src) return;
+        window.__ar3_popup_queue = window.__ar3_popup_queue || [];
+        window.__ar3_popup_queue.push(JSON.stringify({key: key, src: src}));
+    }
+
+    var overlay = document.createElement('div');
+    overlay.id = '__ar3_tile_overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:#1a1a2e;display:flex;flex-direction:column;font-family:"Microsoft YaHei",sans-serif;';
+
+    var topBar = document.createElement('div');
+    topBar.style.cssText = 'display:flex;align-items:center;background:#16213e;border-bottom:2px solid #2a2a4a;padding:6px 12px;flex-shrink:0;gap:8px;';
+    var title = document.createElement('span');
+    title.textContent = '图片平铺';
+    title.style.cssText = 'flex:1;color:#e0e0e0;font-size:14px;font-weight:bold;';
+    topBar.appendChild(title);
+    var popupCloseBtn = document.createElement('button');
+    popupCloseBtn.textContent = '关弹窗';
+    popupCloseBtn.title = '关闭所有已打开的图片弹窗';
+    popupCloseBtn.style.cssText = 'flex-shrink:0;background:#1a1a2e;color:#a0a0b0;border:1px solid #2a2a4a;border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12px;font-family:inherit;';
+    popupCloseBtn.onclick = function() {
+        window.__ar3_popup_queue = window.__ar3_popup_queue || [];
+        window.__ar3_popup_queue.push(JSON.stringify({key: '__close_all__', src: ''}));
+    };
+    topBar.appendChild(popupCloseBtn);
+    var closeBtn = document.createElement('button');
+    closeBtn.textContent = '返回原页面';
+    closeBtn.style.cssText = 'flex-shrink:0;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
+    closeBtn.onclick = function() {
+        document.body.removeChild(overlay);
+        window.__ar3_overlay_just_closed = true;
+    };
+    topBar.appendChild(closeBtn);
+    overlay.appendChild(topBar);
+
+    var grid = document.createElement('div');
+    grid.id = '__ar3_tile_grid';
+    grid.style.cssText = 'flex:1;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:1fr;gap:8px;padding:8px;overflow-y:auto;min-height:0;';
+    overlay.appendChild(grid);
+
+    var draggedCell = null;
+
+    // In-cell zoom/pan: wheel = zoom, right-button drag = pan (only when zoomed).
+    // Pan listeners live on the overlay so they are removed together with it.
+    var panState = null;
+    overlay.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+    overlay.addEventListener('mousemove', function(e) {
+        if (!panState) return;
+        panState.z.tx = panState.baseTx + (e.clientX - panState.startX);
+        panState.z.ty = panState.baseTy + (e.clientY - panState.startY);
+        panState.z.apply();
+    });
+    overlay.addEventListener('mouseup', function(e) {
+        if (e.button === 2) panState = null;
+    });
+
+    function makeCell(labelText, key, src, accent) {
+        var cell = document.createElement('div');
+        cell.style.cssText = 'position:relative;display:flex;align-items:center;justify-content:center;background:#16213e;border-radius:8px;overflow:hidden;min-height:120px;border:1px solid ' + (accent ? '#e94560' : '#2a2a4a') + ';';
+        var label = document.createElement('span');
+        label.textContent = labelText;
+        label.style.cssText = 'position:absolute;top:6px;left:10px;z-index:1;color:' + (accent ? '#e94560' : '#a0a0b0') + ';font-size:12px;font-weight:bold;background:rgba(26,26,46,0.7);padding:2px 8px;border-radius:4px;';
+        cell.appendChild(label);
+        var btnRow = document.createElement('div');
+        btnRow.style.cssText = 'position:absolute;top:6px;right:8px;z-index:2;display:flex;gap:4px;align-items:center;';
+        cell.appendChild(btnRow);
+        var viewBtn = document.createElement('button');
+        viewBtn.className = '__ar3_tile_view_btn';
+        viewBtn.textContent = '窗口查看';
+        viewBtn.title = '在独立窗口中查看此图片';
+        viewBtn.draggable = false;
+        viewBtn.style.cssText = 'background:#0f3460;color:#e0e0e0;border:1px solid #5c7cfa;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px;font-family:inherit;';
+        viewBtn.onclick = function(e) { e.stopPropagation(); queuePopup(key, src); };
+        btnRow.appendChild(viewBtn);
+        if (src) {
+            var img = document.createElement('img');
+            img.src = src;
+            img.draggable = false;
+            img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;transform-origin:center center;';
+            cell.appendChild(img);
+
+            var resetBtn = document.createElement('button');
+            resetBtn.className = '__ar3_tile_reset_btn';
+            resetBtn.textContent = '\u21bb';
+            resetBtn.title = '恢复原始大小、位置和方向';
+            resetBtn.draggable = false;
+            resetBtn.style.cssText = 'position:absolute;bottom:8px;right:8px;z-index:2;display:none;width:30px;height:30px;background:rgba(15,52,96,0.45);color:rgba(224,224,224,0.8);border:1px solid rgba(92,124,250,0.45);border-radius:15px;cursor:pointer;font-size:15px;line-height:1;font-family:inherit;';
+            resetBtn.onmouseenter = function() { resetBtn.style.background = 'rgba(92,124,250,0.75)'; resetBtn.style.color = '#fff'; };
+            resetBtn.onmouseleave = function() { resetBtn.style.background = 'rgba(15,52,96,0.45)'; resetBtn.style.color = 'rgba(224,224,224,0.8)'; };
+            cell.appendChild(resetBtn);
+
+            var zoom = {scale: 1, tx: 0, ty: 0, rot: 0, mir: false};
+            zoom.apply = function() {
+                img.style.transform = 'translate(' + zoom.tx + 'px,' + zoom.ty + 'px) rotate(' + zoom.rot + 'deg) scale(' + zoom.scale + ')' + (zoom.mir ? ' scaleX(-1)' : '');
+                var changed = (zoom.scale > 1.001 || zoom.rot % 360 !== 0 || zoom.mir);
+                resetBtn.style.display = changed ? 'block' : 'none';
+            };
+            zoom.reset = function() {
+                zoom.scale = 1; zoom.tx = 0; zoom.ty = 0; zoom.rot = 0; zoom.mir = false;
+                zoom.apply();
+            };
+            cell.__ar3_zoom = zoom;
+
+            resetBtn.onclick = function(e) { e.stopPropagation(); zoom.reset(); };
+
+            function makeGhostBtn(text, title, cls) {
+                var b = document.createElement('button');
+                b.className = cls;
+                b.textContent = text;
+                b.title = title;
+                b.draggable = false;
+                b.style.cssText = 'width:26px;height:26px;padding:0;background:rgba(15,52,96,0.45);color:rgba(224,224,224,0.8);border:1px solid rgba(92,124,250,0.45);border-radius:13px;cursor:pointer;font-size:13px;line-height:1;font-family:inherit;';
+                b.onmouseenter = function() { b.style.background = 'rgba(92,124,250,0.75)'; b.style.color = '#fff'; };
+                b.onmouseleave = function() { b.style.background = 'rgba(15,52,96,0.45)'; b.style.color = 'rgba(224,224,224,0.8)'; };
+                return b;
+            }
+
+            var mirrorBtn = makeGhostBtn('\u21c4', '水平翻转', '__ar3_tile_mirror_btn');
+            mirrorBtn.onclick = function(e) { e.stopPropagation(); zoom.mir = !zoom.mir; zoom.apply(); };
+            var rotLBtn = makeGhostBtn('\u21b6', '向左旋转 15\u00b0', '__ar3_tile_rotl_btn');
+            rotLBtn.onclick = function(e) { e.stopPropagation(); zoom.rot -= 15; zoom.apply(); };
+            var rotRBtn = makeGhostBtn('\u21b7', '向右旋转 15\u00b0', '__ar3_tile_rotr_btn');
+            rotRBtn.onclick = function(e) { e.stopPropagation(); zoom.rot += 15; zoom.apply(); };
+            btnRow.insertBefore(rotRBtn, viewBtn);
+            btnRow.insertBefore(rotLBtn, rotRBtn);
+            btnRow.insertBefore(mirrorBtn, rotLBtn);
+
+            cell.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var factor = (e.deltaY < 0) ? 1.15 : (1 / 1.15);
+                zoom.scale = Math.min(10, Math.max(1, zoom.scale * factor));
+                if (zoom.scale <= 1.001) { zoom.scale = 1; zoom.tx = 0; zoom.ty = 0; }
+                zoom.apply();
+            }, {passive: false});
+
+            cell.addEventListener('mousedown', function(e) {
+                if (e.button !== 2 || zoom.scale <= 1) return;
+                e.preventDefault();
+                panState = {z: zoom, startX: e.clientX, startY: e.clientY, baseTx: zoom.tx, baseTy: zoom.ty};
+            });
+        }
+        return cell;
+    }
+
+    // Model cells reorder via HTML5 drag; the ref cell is fixed at slot 0 and the
+    // CSS grid reflow makes remaining cells shift into the freed slot automatically.
+    function makeDraggable(cell) {
+        cell.draggable = true;
+        cell.style.cursor = 'grab';
+        cell.addEventListener('dragstart', function(e) {
+            draggedCell = cell;
+            cell.style.opacity = '0.4';
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', cell.getAttribute('data-tile-model') || ''); } catch (err) {}
+            }
+        });
+        cell.addEventListener('dragend', function() {
+            cell.style.opacity = '1';
+            draggedCell = null;
+        });
+        cell.addEventListener('dragover', function(e) {
+            if (!draggedCell || draggedCell === cell) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            var cells = Array.prototype.slice.call(grid.children);
+            var from = cells.indexOf(draggedCell);
+            var to = cells.indexOf(cell);
+            if (from < 0 || to < 0 || from === to) return;
+            if (from < to) grid.insertBefore(draggedCell, cell.nextSibling);
+            else grid.insertBefore(draggedCell, cell);
+        });
+        cell.addEventListener('drop', function(e) { e.preventDefault(); });
+    }
+
+    var refSrc = '';
+    if (refItem) {
+        var refImg = refItem.querySelector('img.img');
+        refSrc = refImg ? refImg.src : '';
+    }
+    var refCell = makeCell('参考图', 'ref_image', refSrc, true);
+    refCell.setAttribute('data-tile-ref', '1');
+    grid.appendChild(refCell);
+
+    var count = 0;
+    modelItems.forEach(function(item) {
+        var m = item.id.match(/model_([A-H])$/);
+        if (!m) return;
+        var letter = m[1];
+        var img = item.querySelector('img.img');
+        var cell = makeCell('模型' + letter, 'model_' + letter, img ? img.src : '', false);
+        cell.setAttribute('data-tile-model', letter);
+        makeDraggable(cell);
+        grid.appendChild(cell);
+        count++;
+    });
+
+    // Bottom rank bar — mirrors the original page's current rank order (display
+    // only for now; no sorting logic in tiled mode yet).
+    var rankColors = [];
+    document.querySelectorAll('.rank-title').forEach(function(el) {
+        rankColors.push(el.style.backgroundColor || '');
+    });
+    var rankListItems = [];
+    document.querySelectorAll('.rank-list-item').forEach(function(el) {
+        rankListItems.push((el.childNodes[0] || {}).textContent || '');
+    });
+    var bottomBar = document.createElement('div');
+    bottomBar.id = '__ar3_tile_rank_bar';
+    bottomBar.style.cssText = 'flex-shrink:0;background:#16213e;border-top:2px solid #2a2a4a;padding:8px 12px 10px;display:flex;gap:4px;';
+    var ranks = rankListItems.length ? rankListItems : ['模型A','模型B','模型C','模型D','模型E','模型F','模型G','模型H'];
+    ranks.forEach(function(name, ri) {
+        var color = rankColors[ri] || '#333';
+        var letter = (name.match(/模型([A-H])/) || [])[1] || '';
+        var slot = document.createElement('div');
+        slot.className = '__ar3_tile_rank_slot';
+        slot.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:#1a1a2e;border-radius:4px;padding:6px 4px;font-size:12px;color:#e0e0e0;border-bottom:3px solid ' + color + ';';
+        slot.innerHTML = '<span style="font-weight:bold;color:' + color + ';">RANK ' + (ri + 1) + '</span>' +
+            '<span>' + (letter ? '模型' + letter : name) + '</span>';
+        bottomBar.appendChild(slot);
+    });
+    overlay.appendChild(bottomBar);
+
+    document.body.appendChild(overlay);
+    return JSON.stringify({status: 'transformed', mode: 'tiled', count: count});
+})();
+"""
+
+REMOVE_TILED_LAYOUT = """
+(function() {
+    var overlay = document.getElementById('__ar3_tile_overlay');
+    if (overlay) {
+        overlay.parentNode.removeChild(overlay);
         return 'removed';
     }
     return 'not_found';

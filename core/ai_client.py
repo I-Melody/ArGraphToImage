@@ -148,14 +148,25 @@ class AiClient(QObject):
         if not text:
             return json.dumps({"raw": ""}, ensure_ascii=False)
         s = text.strip()
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", s)
-        if m:
-            s = m.group(1).strip()
+        for pat in (r"```(?:json)?\s*([\s\S]*?)```", r"```\s*([\s\S]*?)```"):
+            m = re.search(pat, s)
+            if m:
+                s = m.group(1).strip()
+                break
         try:
             json.loads(s)
             return s
         except Exception:
             pass
+        # Strip fence markers from boundaries in case the regex missed them
+        s2 = re.sub(r'^```(?:json)?\s*', '', s or '')
+        s2 = re.sub(r'\s*```$', '', s2).strip()
+        if s2 != s:
+            try:
+                json.loads(s2)
+                return s2
+            except Exception:
+                pass
         i, j = s.find("{"), s.rfind("}")
         if 0 <= i < j:
             cand = s[i:j + 1]

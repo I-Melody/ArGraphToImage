@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
         "auto_restructure": True,
         "debounce_ms": 500
     },
+    "parse_mode": "tabbed",
     "sort_scheme": "inconsistency",
     "auto_fill_model": False,
     "auto_fill_a3": False,

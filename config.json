@@ -16,6 +16,7 @@
     "auto_restructure": true,
     "debounce_ms": 500
   },
+  "parse_mode": "tabbed",
   "sort_scheme": "inconsistency",
   "auto_fill_model": true,
   "auto_fill_a3": true,
