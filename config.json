@@ -22,6 +22,7 @@
   "auto_fill_a3": true,
   "auto_fill_a4": true,
   "auto_fill_a2": true,
+  "auto_save_interval_sec": 45,
   "slider_mode": "multi",
   "slider_multi": [
     0.1,

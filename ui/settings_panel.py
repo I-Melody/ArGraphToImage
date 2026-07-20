@@ -20,6 +20,7 @@ class SettingsPanel(QWidget):
     sort_scheme_changed = pyqtSignal(str)
     scores_changed = pyqtSignal(dict)
     slider_changed = pyqtSignal(dict)
+    auto_save_interval_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -221,6 +222,37 @@ class SettingsPanel(QWidget):
         slider_layout.addWidget(self.slider_status)
 
         layout.addWidget(slider_group)
+
+        # ---- Auto-save interval ----
+        auto_save_group = QGroupBox("自动保存")
+        auto_save_group.setStyleSheet(self._group_style())
+        auto_save_layout = QHBoxLayout(auto_save_group)
+        auto_save_layout.setSpacing(8)
+        auto_save_lbl = QLabel("自动保存间隔(秒):")
+        auto_save_lbl.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.auto_save_spin = QSpinBox()
+        self.auto_save_spin.setRange(15, 300)
+        self.auto_save_spin.setSingleStep(5)
+        self.auto_save_spin.setSuffix(" 秒")
+        self.auto_save_spin.setStyleSheet("""
+            QSpinBox {
+                background: #12122a; color: #e0e0e0;
+                border: 1px solid #2a2a4a; border-radius: 4px;
+                padding: 4px 6px; font-size: 12px;
+            }
+            QSpinBox:focus { border-color: #5c7cfa; }
+            QSpinBox::up-button, QSpinBox::down-button { width: 0px; }
+        """)
+        self.auto_save_spin.valueChanged.connect(self._on_auto_save_changed)
+        auto_save_layout.addWidget(auto_save_lbl)
+        auto_save_layout.addWidget(self.auto_save_spin)
+        auto_save_layout.addStretch()
+
+        self.auto_save_status = QLabel("")
+        self.auto_save_status.setStyleSheet("color: #0e9a4a; font-size: 11px;")
+        auto_save_layout.addWidget(self.auto_save_status)
+
+        layout.addWidget(auto_save_group)
         layout.addStretch()
 
     def _btn_style(self, primary=False):
@@ -266,6 +298,7 @@ class SettingsPanel(QWidget):
         for i in range(5):
             self.slider_spins_multi[i].setValue(float(multi_vals[i]) if i < len(multi_vals) else 1.0)
             self.slider_spins_add[i].setValue(int(add_vals[i]) if i < len(add_vals) else 0)
+        self.auto_save_spin.setValue(int(config.get("auto_save_interval_sec", 45)))
 
     def _on_parse_mode_changed(self):
         mode = "tiled" if self.radio_mode_tiled.isChecked() else "tabbed"
@@ -304,3 +337,10 @@ class SettingsPanel(QWidget):
         config.save(cfg)
         self.slider_status.setText("已保存")
         self.slider_changed.emit({"mode": mode, "multi": multi_vals, "add": add_vals})
+
+    def _on_auto_save_changed(self, val):
+        cfg = config.load()
+        cfg["auto_save_interval_sec"] = val
+        config.save(cfg)
+        self.auto_save_status.setText("已保存")
+        self.auto_save_interval_changed.emit(val)

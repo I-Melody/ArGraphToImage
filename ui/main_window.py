@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._settings_panel.scores_changed.connect(self._on_scores_changed)
         self._settings_panel.slider_changed.connect(self._on_slider_changed)
+        self._settings_panel.auto_save_interval_changed.connect(self._on_auto_save_interval_changed)
         self._ai_settings_panel = AiSettingsPanel(self)
         self._ai_settings_panel.api_key_changed.connect(self._on_api_key_changed)
         self._ai_settings_panel.ai_model_changed.connect(self._on_ai_model_changed)
@@ -103,6 +104,10 @@ class MainWindow(QMainWindow):
         self._ai_timer.timeout.connect(self._poll_ai_requests)
         self._ai_timer_active = False
 
+        self._keepalive_timer = QTimer(self)
+        self._keepalive_timer.setInterval(180000)
+        self._keepalive_timer.timeout.connect(self._keepalive_ping)
+
     def _ai_timer_start(self):
         if not self._ai_timer_active:
             self._ai_timer.start()
@@ -124,6 +129,7 @@ class MainWindow(QMainWindow):
         self._assistant_panel.recognize_clicked.connect(self._on_recognize_requested)
         self._assistant_panel.transform_clicked.connect(self._on_transform_requested)
         self._assistant_panel.remove_clicked.connect(self._on_remove_requested)
+        self._assistant_panel.debug_clicked.connect(self._on_debug_action)
 
         self._injector.page_detected.connect(self._on_page_detected)
         self._injector.detection_failed.connect(self._on_detection_failed)
@@ -169,9 +175,14 @@ class MainWindow(QMainWindow):
         event_bus.page_loaded.emit(url)
         self._injector.start_monitoring()
         self._monitor_timer.start()
+        self._keepalive_timer.start()
 
     def _poll_ai_requests(self):
         self.browser().page().runJavaScript(POLL_QUEUES, self._on_queues_polled)
+
+    def _keepalive_ping(self):
+        self.browser().page().runJavaScript(
+            "fetch(window.location.origin+'/',{method:'HEAD',cache:'no-store'}).catch(function(){})")
 
     def _on_queues_polled(self, payload):
         if not payload or payload == "null":
@@ -182,8 +193,10 @@ class MainWindow(QMainWindow):
             return
         ai_payload = data.get("ai", "[]")
         popup_payload = data.get("popup", "[]")
+        save_payload = data.get("save", "[]")
         self._dispatch_ai_requests(ai_payload)
         self._dispatch_popup_requests(popup_payload)
+        self._handle_save_queue(save_payload)
         if data.get("overlayClosed"):
             self._browser_panel.set_url_bar_visible(True)
             self._ai_timer_stop()
@@ -220,6 +233,70 @@ class MainWindow(QMainWindow):
             if key and src and hasattr(page, "open_image_popup"):
                 page.open_image_popup(key, src)
 
+    def _saves_path(self):
+        import os
+        if getattr(sys, 'frozen', False):
+            root = sys._MEIPASS
+        else:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(root, ".webdata", "saves.json")
+
+    def _handle_save_queue(self, payload):
+        if not payload or payload == "[]":
+            return
+        try:
+            items = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not items:
+            return
+        try:
+            import os
+            MAX_TASKS = 10
+            path = self._saves_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            data = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+            for item in items:
+                p = item.get("payload", {})
+                task = p.get("task", "0")
+                if not task or task == "0":
+                    continue
+                data[task] = {"auto": p.get("auto", []), "manual": p.get("manual", [])}
+            if len(data) > MAX_TASKS:
+                def _latest_ts(v):
+                    t = 0
+                    for a in v.get("auto", []):
+                        t = max(t, a.get("ts", 0))
+                    for m in v.get("manual", []):
+                        t = max(t, m.get("ts", 0))
+                    return t
+                sorted_keys = sorted(data.keys(), key=lambda k: _latest_ts(data[k]))
+                for k in sorted_keys[:len(sorted_keys) - MAX_TASKS]:
+                    del data[k]
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception as e:
+            _log.warning(f"Save queue persist failed: {e}")
+
+    def _inject_persisted_saves(self):
+        import os
+        path = self._saves_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        self.browser().page().runJavaScript(
+            f"window.__ar3_persisted_saves = {json.dumps(data)};")
+
     def _on_ai_described(self, request_id, result_json):
         js = f"window.__ar3_ai_render({json.dumps(request_id)}, {json.dumps(result_json)});"
         self.browser().page().runJavaScript(js)
@@ -233,6 +310,7 @@ class MainWindow(QMainWindow):
     def _on_transform_requested(self):
         _log.info("Transform layout requested")
         self._inject_word_config()
+        self._inject_persisted_saves()
         self._adjuster.apply_tabbed_layout()
 
     def _on_remove_requested(self):
@@ -240,6 +318,111 @@ class MainWindow(QMainWindow):
         self._adjuster.remove_layout()
         self._browser_panel.set_url_bar_visible(True)
         self._ai_timer_stop()
+
+    def _on_debug_action(self, tag):
+        _log.info(f"Debug action: {tag}")
+        page = self.browser().page()
+        if tag == "overlay":
+            js = """
+            (function() {
+                var tabs = window.__ar3_tabs;
+                if (!tabs) return JSON.stringify({error:'overlay_not_open'});
+                var out = {active: window.__ar3_active_letter, dirty: Array.from(window.__ar3_dirty_models||[]), models:{}};
+                Object.keys(tabs).forEach(function(l) {
+                    var t = tabs[l];
+                    out.models[l] = {incomplete: !!t.incomplete};
+                    if (t.updateProgress) {
+                        var p = t.updateProgress();
+                        out.models[l].progress = p;
+                    }
+                    (t.dims||[]).forEach(function(d) {
+                        var ri = d.__ar3_reasonInfo;
+                        if (!ri) return;
+                        var idx = ri.getActiveIdx ? ri.getActiveIdx() : -1;
+                        var sev = idx>=0 && ri.btnDefs ? ri.btnDefs[idx].label : '?';
+                        out.models[l][d.__ar3_dimPrefix||'?'] = {
+                            sev: sev, sevIdx: idx, dirty: !!d.__ar3_dirty,
+                            setActive: !!d.__ar3_settingActive,
+                            taA: (ri.taA ? ri.taA.value : ''),
+                            taB: (ri.taB ? ri.taB.value : ''),
+                            score: d.__ar3_score, adjIdx: d.__ar3_adjIdx
+                        };
+                    });
+                });
+                out.historyCount = (window.__ar3_history||[]).length;
+                out.autoSavesCount = (window.__ar3_auto_saves||[]).length;
+                out.autoSaveTimer = !!window.__ar3_auto_save_timer;
+                out.restoring = !!window.__ar3_restoring;
+                return JSON.stringify(out);
+            })();
+            """
+        elif tag == "original":
+            js = """
+            (function() {
+                var ms = document.querySelectorAll('.multiple-select');
+                var out = [];
+                ms.forEach(function(el) {
+                    var lbl = el.querySelector('.ivu-form-item-label, label');
+                    var labelText = lbl ? lbl.textContent.trim() : '';
+                    var checked = [];
+                    el.querySelectorAll('.checkboxItem').forEach(function(it) {
+                        if ((it.className||'').indexOf('ivu-checkbox-wrapper-checked')>=0) {
+                            var cb = it.querySelector('input[type=checkbox]');
+                            checked.push(cb&&cb.value ? cb.value : (it.textContent||'').trim());
+                        }
+                    });
+                    var tCol = el.closest('.t-col-6,.t-col');
+                    var remark = '';
+                    if (tCol) {
+                        var ci = tCol.querySelector('.customInput.horizontalLtr');
+                        if (ci) remark = (ci.textContent||'').substring(0,120);
+                    }
+                    out.push({label:labelText, checked:checked, remark:remark});
+                });
+                return JSON.stringify(out);
+            })();
+            """
+        elif tag == "syncer":
+            js = """
+            (function() {
+                return JSON.stringify({
+                    syncObserverActive: !!window.__ar3_sync_observer_active,
+                    tabsExist: !!window.__ar3_tabs,
+                    dirtyModels: window.__ar3_dirty_models ? Array.from(window.__ar3_dirty_models) : [],
+                    imeUntil: window.__ar3_ime_until || 0,
+                    lastAI: !!window.__ar3_last_ai,
+                    overlayClosed: !!window.__ar3_overlay_just_closed
+                });
+            })();
+            """
+        elif tag == "test_write":
+            js = """
+            (function() {
+                var inputs = document.querySelectorAll('.customInput.horizontalLtr');
+                if (!inputs.length) return JSON.stringify({error:'no_customInput_found'});
+                var testVal = '__DEBUG_TEST__' + Date.now();
+                var target = inputs[0];
+                target.focus();
+                target.innerText = testVal;
+                try { target.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); } catch(e){}
+                var readBack = target.textContent || '';
+                return JSON.stringify({wrote: testVal, readBack: readBack, match: readBack.indexOf(testVal)>=0, totalInputs: inputs.length});
+            })();
+            """
+        else:
+            self._assistant_panel.log(f"Unknown debug action: {tag}")
+            return
+
+        def _show_debug(result_str):
+            try:
+                data = json.loads(result_str) if result_str else {"error": "empty_result"}
+            except Exception:
+                data = {"raw": str(result_str)[:500]}
+            text = json.dumps(data, ensure_ascii=False, indent=2)
+            self._assistant_panel.log(f"[DEBUG:{tag}]\n{text}")
+            _log.info(f"Debug [{tag}]: {text[:300]}")
+
+        page.runJavaScript(js, _show_debug)
 
     def _on_content_changed(self, payload):
         changes = payload.get("changes", []) if isinstance(payload, dict) else []
@@ -331,6 +514,17 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("滑块设置已更新")
         _log.info(f"Slider config updated: mode={slider_cfg.get('mode')}")
 
+    def _on_auto_save_interval_changed(self, interval_sec):
+        self._inject_auto_save_interval(interval_sec)
+        self._status_bar.showMessage(f"自动保存间隔已更新: {interval_sec}秒")
+        _log.info(f"Auto-save interval changed: {interval_sec}s")
+
+    def _inject_auto_save_interval(self, interval_sec=None):
+        if interval_sec is None:
+            interval_sec = config.get("auto_save_interval_sec", 45)
+        ms = max(15, int(interval_sec)) * 1000
+        self.browser().page().runJavaScript(f"window.__ar3_auto_save_interval_ms = {ms};")
+
     def _inject_slider_config(self, slider_cfg=None):
         if slider_cfg is None:
             slider_cfg = {
@@ -350,8 +544,10 @@ class MainWindow(QMainWindow):
         auto_fill_a3 = json.dumps(config.get("auto_fill_a3", False))
         auto_fill_a4 = json.dumps(config.get("auto_fill_a4", False))
         auto_fill_a2 = json.dumps(config.get("auto_fill_a2", False))
-        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";window.__ar3_ai_model=" + json.dumps(ai_model) + ";window.__ar3_auto_fill_model=" + auto_fill + ";window.__ar3_auto_fill_a3=" + auto_fill_a3 + ";window.__ar3_auto_fill_a4=" + auto_fill_a4 + ";window.__ar3_auto_fill_a2=" + auto_fill_a2 + ";"
+        auto_save_ms = max(15, int(config.get("auto_save_interval_sec", 45))) * 1000
+        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";window.__ar3_ai_model=" + json.dumps(ai_model) + ";window.__ar3_auto_fill_model=" + auto_fill + ";window.__ar3_auto_fill_a3=" + auto_fill_a3 + ";window.__ar3_auto_fill_a4=" + auto_fill_a4 + ";window.__ar3_auto_fill_a2=" + auto_fill_a2 + ";window.__ar3_auto_save_interval_ms=" + str(auto_save_ms) + ";"
         self.browser().page().runJavaScript(js)
+        self._inject_persisted_saves()
 
     def _inject_word_config(self):
         global _WORD_CONFIG_CACHE
@@ -417,6 +613,7 @@ class MainWindow(QMainWindow):
             mode = config.get("parse_mode", "tabbed")
             _log.info(f"Auto-applying layout after detection (mode={mode})")
             try:
+                self._inject_persisted_saves()
                 self._adjuster.apply_layout(mode)
             except Exception as e:
                 _log.exception("Layout apply failed")

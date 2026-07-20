@@ -365,7 +365,7 @@ APPLY_TABBED_LAYOUT = """
     // in a fixed bar below the topBar — does NOT change with tab switching.
     window.__ar3_ai_queue = window.__ar3_ai_queue || [];
     if (typeof window.__ar3_last_ai !== 'object' || !window.__ar3_last_ai) window.__ar3_last_ai = {};
-    var _ar3_task_sig = (function() { var im = refItem && refItem.querySelector('img.img'); return im ? im.src : ''; })();
+    var _ar3_task_sig = (function() { var im = refItem && refItem.querySelector('img.img'); return im ? im.src.split('?')[0] : ''; })();
     if (window.__ar3_ai_task_sig !== _ar3_task_sig) {
         window.__ar3_last_ai = {};
         window.__ar3_ai_task_sig = _ar3_task_sig;
@@ -561,6 +561,32 @@ APPLY_TABBED_LAYOUT = """
         window.__ar3_popup_queue.push(JSON.stringify({key: '__close_all__', src: ''}));
     };
     topBar.appendChild(popupCloseBtn);
+    var historyBtn = document.createElement('button');
+    historyBtn.id = '__ar3_history_btn';
+    historyBtn.textContent = '历史';
+    historyBtn.title = '历史记录 / 恢复状态';
+    historyBtn.style.cssText = 'flex-shrink:0;align-self:center;margin-left:8px;background:#1a1a2e;color:#a0a0b0;border:1px solid #2a2a4a;border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12px;font-family:inherit;';
+    historyBtn.onclick = function() {
+        var dd = document.getElementById('__ar3_history_panel');
+        if (dd) {
+            if (dd.style.display === 'none') {
+                var rect = historyBtn.getBoundingClientRect();
+                dd.style.top = rect.bottom + 2 + 'px';
+                dd.style.left = Math.max(4, rect.left) + 'px';
+                dd.style.display = 'block';
+                historyBtn.style.background = '#0f3460';
+                historyBtn.style.color = '#e0e0e0';
+                historyBtn.style.border = '1px solid #5c7cfa';
+                if (window._ar3_render_history_panel) window._ar3_render_history_panel();
+            } else {
+                dd.style.display = 'none';
+                historyBtn.style.background = '#1a1a2e';
+                historyBtn.style.color = '#a0a0b0';
+                historyBtn.style.border = '1px solid #2a2a4a';
+            }
+        }
+    };
+    topBar.appendChild(historyBtn);
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '返回原页面';
     closeBtn.style.cssText = 'flex-shrink:0;align-self:center;margin-left:8px;background:#e94560;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;';
@@ -572,6 +598,58 @@ APPLY_TABBED_LAYOUT = """
     tabContent.id = '__ar3_tab_content';
     tabContent.style.cssText = 'flex:1;display:flex;overflow:hidden;min-height:0;';
     overlay.appendChild(tabContent);
+
+    // ---- History dropdown (below button) ----
+    var historyDropdown = document.createElement('div');
+    historyDropdown.id = '__ar3_history_panel';
+    historyDropdown.style.cssText = 'display:none;position:fixed;z-index:10001;background:#16213e;border:1px solid #2a2a4a;border-radius:6px;min-width:380px;max-height:380px;overflow:hidden;font-family:"Microsoft YaHei",sans-serif;box-shadow:0 4px 24px rgba(0,0,0,0.7);';
+    historyDropdown.innerHTML =
+        '<div style="padding:6px 12px;background:#1a1a2e;border-bottom:1px solid #2a2a4a;display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-weight:bold;color:#e94560;font-size:12px;">\u5386\u53f2\u8bb0\u5f55</span>' +
+            '<span style="color:#a0a0b0;font-size:10px;">\u70b9\u51fb\u6761\u76ee\u6062\u590d\u72b6\u6001</span>' +
+        '</div>' +
+        '<div id="__ar3_history_combined" style="max-height:320px;overflow-y:auto;padding:2px 0;"></div>';
+    overlay.appendChild(historyDropdown);
+
+    window._ar3_render_history_panel = function() {
+        var listDiv = document.getElementById('__ar3_history_combined');
+        if (!listDiv) return;
+        var combined = [].concat(window.__ar3_history || [], window.__ar3_auto_saves || [], window.__ar3_manual_saves || []);
+        combined.sort(function(a, b) { return a.ts - b.ts; });
+        listDiv.innerHTML = '';
+        if (combined.length === 0) {
+            var empty = document.createElement('div');
+            empty.style.cssText = 'padding:16px 12px;color:#606080;font-size:12px;text-align:center;';
+            empty.textContent = '\u6682\u65e0\u8bb0\u5f55';
+            listDiv.appendChild(empty);
+        }
+        var curTs = window.__ar3_current_ts || 0;
+        combined.forEach(function(rec) {
+            var item = document.createElement('div');
+            var isSave = rec.operation === 'auto-save' || rec.operation === 'save';
+            var discarded = rec.ts > curTs;
+            var amberBg = isSave ? 'background:#3d2e1a;' : '';
+            var itemColor = isSave ? '#e0c080' : '#e0e0e0';
+            item.style.cssText = 'padding:4px 12px;border-bottom:1px solid #1a1a2e;cursor:pointer;font-size:11px;font-family:monospace;' +
+                (discarded ? 'text-decoration:line-through;opacity:0.5;' : '') +
+                amberBg + 'color:' + itemColor + ';';
+            item.textContent = rec.description;
+            var label = isSave ? (rec.operation === 'auto-save' ? '\u81ea\u52a8\u4fdd\u5b58' : '\u624b\u52a8\u8bb0\u5f55') : '';
+            item.title = (discarded ? '\u5df2\u64a4\u9500 ' : '') + label + (label ? ' \u70b9\u51fb\u6062\u590d\u5230\u6b64\u72b6\u6001' : '\u70b9\u51fb\u6062\u590d\u5230\u6b64\u72b6\u6001');
+            item.onclick = function() {
+                window.__ar3_restoring = true;
+                window.__ar3_current_ts = rec.ts;
+                if (typeof _ar3_restore_state === 'function') _ar3_restore_state(rec.state);
+                window.__ar3_restoring = false;
+                if (window._ar3_render_history_panel) window._ar3_render_history_panel();
+            };
+            item.addEventListener('mouseenter', function() { if (item.style.background.indexOf('#0e7a3a') < 0) item.style.background = '#1e2e50'; });
+            item.addEventListener('mouseleave', function() {
+                if (item.style.background === '#1e2e50') item.style.background = isSave ? '#3d2e1a' : '';
+            });
+            listDiv.appendChild(item);
+        });
+    };
 
     var bottomBar = document.createElement('div');
     bottomBar.id = '__ar3_rank_bar';
@@ -782,6 +860,181 @@ APPLY_TABBED_LAYOUT = """
         if (m) window.__ar3_dirty_models.add(m[1]);
     };
 
+    window.__ar3_history = [];
+    window.__ar3_auto_saves = [];
+    window.__ar3_manual_saves = [];
+    window.__ar3_auto_save_timer = null;
+    var _ar3_auto_save_ms = (typeof window.__ar3_auto_save_interval_ms === 'number' && window.__ar3_auto_save_interval_ms >= 15000) ? window.__ar3_auto_save_interval_ms : 45000;
+
+    var _ar3_format_time = function(ts) {
+        var d = new Date(ts);
+        return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0') + ':' + d.getSeconds().toString().padStart(2,'0');
+    };
+
+    var _ar3_capture_state = function() {
+        var state = {};
+        Object.keys(tabs).forEach(function(letter) {
+            state[letter] = [];
+            (tabs[letter].dims || []).forEach(function(dim) {
+                var info = dim.__ar3_reasonInfo;
+                if (!info) { state[letter].push(null); return; }
+                state[letter].push({
+                    severityIdx: typeof info.getActiveIdx === 'function' ? info.getActiveIdx() : -1,
+                    refText: info.taA ? info.taA.value : '',
+                    genText: info.taB ? info.taB.value : '',
+                    sliderIdx: dim.__ar3_adjIdx !== undefined ? dim.__ar3_adjIdx : 2
+                });
+            });
+        });
+        return state;
+    };
+
+    var _ar3_add_history = function(model, dim, operation) {
+        if (window.__ar3_restoring) return;
+        var currentTs = window.__ar3_current_ts || 0;
+        window.__ar3_history = (window.__ar3_history || []).filter(function(e) { return e.ts <= currentTs; });
+        var now = Date.now();
+        window.__ar3_current_ts = now;
+        var time = _ar3_format_time(now);
+        var desc = time + ' ' + operation;
+        var record = {
+            ts: now,
+            time: time,
+            description: desc,
+            state: _ar3_capture_state()
+        };
+        window.__ar3_history.unshift(record);
+        if (window.__ar3_history.length > 30) window.__ar3_history.pop();
+        if (window._ar3_render_history_panel) window._ar3_render_history_panel();
+    };
+
+    var _ar3_add_auto_save = function() {
+        var now = Date.now();
+        var currentTs = window.__ar3_current_ts || 0;
+        window.__ar3_auto_saves = (window.__ar3_auto_saves || []).filter(function(e) { return e.ts <= currentTs; });
+        window.__ar3_current_ts = now;
+        var time = _ar3_format_time(now);
+        var record = {
+            ts: now,
+            time: time,
+            operation: 'auto-save',
+            description: time + ' auto-save',
+            state: _ar3_capture_state()
+        };
+        window.__ar3_auto_saves.unshift(record);
+        window.__ar3_auto_saves.sort(function(a, b) { return b.ts - a.ts; });
+        if (window.__ar3_auto_saves.length > 2) window.__ar3_auto_saves = window.__ar3_auto_saves.slice(0, 2);
+        _ar3_persist_saves();
+        if (window._ar3_render_history_panel) window._ar3_render_history_panel();
+    };
+
+    var _ar3_saves_key = function() { return '__ar3_all_saves'; };
+
+    var _ar3_persist_saves = function() {
+        try {
+            var data = {
+                task: _ar3_task_sig || '0',
+                auto: (window.__ar3_auto_saves || []).slice(0, 2),
+                manual: (window.__ar3_manual_saves || []).slice(0, 2)
+            };
+            window.__ar3_save_queue = window.__ar3_save_queue || [];
+            window.__ar3_save_queue.push(JSON.stringify({kind: 'saves', payload: data}));
+        } catch(e) {}
+    };
+    window._ar3_persist_saves = _ar3_persist_saves;
+
+    var _ar3_load_saves = function() {
+        var persisted = window.__ar3_persisted_saves;
+        if (!persisted) return;
+        try {
+            var data = typeof persisted === 'string' ? JSON.parse(persisted) : persisted;
+            var taskData = data[_ar3_task_sig || '0'] || (data.task === (_ar3_task_sig || '0') ? data : null);
+            if (!taskData) return;
+            if (taskData.auto && Array.isArray(taskData.auto)) window.__ar3_auto_saves = taskData.auto.slice(0, 2);
+            if (taskData.manual && Array.isArray(taskData.manual)) window.__ar3_manual_saves = taskData.manual.slice(0, 2);
+        } catch(e) {}
+    };
+
+    var _ar3_add_manual_save = function() {
+        if (window.__ar3_restoring) return;
+        var now = Date.now();
+        var currentTs = window.__ar3_current_ts || 0;
+        window.__ar3_manual_saves = (window.__ar3_manual_saves || []).filter(function(e) { return e.ts <= currentTs; });
+        window.__ar3_current_ts = now;
+        var time = _ar3_format_time(now);
+        var record = {
+            ts: now,
+            time: time,
+            operation: 'save',
+            description: time + ' save',
+            state: _ar3_capture_state()
+        };
+        window.__ar3_manual_saves.unshift(record);
+        window.__ar3_manual_saves.sort(function(a, b) { return b.ts - a.ts; });
+        if (window.__ar3_manual_saves.length > 2) window.__ar3_manual_saves = window.__ar3_manual_saves.slice(0, 2);
+        _ar3_persist_saves();
+        if (window._ar3_render_history_panel) window._ar3_render_history_panel();
+    };
+
+    _ar3_load_saves();
+
+    var _ar3_restore_state = function(state) {
+        Object.keys(state).forEach(function(letter) {
+            if (!tabs[letter]) return;
+            (state[letter] || []).forEach(function(dimState, dimIdx) {
+                if (!dimState) return;
+                var dim = tabs[letter].dims[dimIdx];
+                if (!dim || !dim.__ar3_reasonInfo) return;
+                var info = dim.__ar3_reasonInfo;
+                if (dimState.severityIdx >= 0 && typeof info.setActive === 'function') {
+                    info.setActive(dimState.severityIdx, true);
+                } else if (dimState.severityIdx < 0 && typeof info.clearActive === 'function') {
+                    info.clearActive();
+                }
+                if (info.taA && dimState.refText !== undefined) {
+                    info.taA.value = dimState.refText;
+                }
+                if (info.taB && dimState.genText !== undefined) {
+                    info.taB.value = dimState.genText;
+                }
+                if (dimState.sliderIdx !== undefined && dim.__ar3_adjIdx !== dimState.sliderIdx) {
+                    dim.__ar3_adjIdx = dimState.sliderIdx;
+                    var slEl = dim.__ar3_slider;
+                    if (slEl) {
+                        slEl.value = String(dimState.sliderIdx);
+                        if (typeof dim.__ar3_apply_adj === 'function') dim.__ar3_apply_adj();
+                    }
+                }
+                if (typeof _ar3_mark_dim_dirty === 'function') _ar3_mark_dim_dirty(dim);
+            });
+        });
+        Object.keys(tabs).forEach(function(letter) {
+            if (tabs[letter].updateProgress) tabs[letter].updateProgress();
+        });
+    };
+
+    var _ar3_start_auto_save = function() {
+        _ar3_stop_auto_save();
+        // Only add immediate auto-save if no loaded entries exist; otherwise
+        // the new entry would push-and-evict a persisted entry on every open.
+        if (window.__ar3_auto_saves.length === 0 && window.__ar3_manual_saves.length === 0) {
+            _ar3_add_auto_save();
+        }
+        window.__ar3_auto_save_timer = setInterval(function() {
+            _ar3_add_auto_save();
+        }, _ar3_auto_save_ms);
+    };
+
+    var _ar3_stop_auto_save = function() {
+        if (window.__ar3_auto_save_timer) {
+            clearInterval(window.__ar3_auto_save_timer);
+    window.__ar3_auto_save_timer = null;
+    window.__ar3_restoring = false;
+    window.__ar3_current_ts = 0;
+        }
+    };
+    window._ar3_stop_auto_save = _ar3_stop_auto_save;
+
     modelLetters.forEach(function(letter, idx) {
         var tabBtn = document.createElement('div');
         tabBtn.id = '__ar3_tab_btn_' + letter;
@@ -945,6 +1198,7 @@ APPLY_TABBED_LAYOUT = """
 
         submitBtn.onclick = function() {
             if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
+            if (typeof _ar3_add_manual_save === 'function') _ar3_add_manual_save();
             var totalDone = 0, totalAll = 0;
             Object.keys(tabs).forEach(function(l) {
                 var st = (tabs[l].updateProgress && tabs[l].updateProgress()) || {done: 0, total: 5};
@@ -1273,6 +1527,7 @@ APPLY_TABBED_LAYOUT = """
             slider.className = '__ar3_dim_slider';
             slider.title = '微调本项评分（×0.1 / ×0.5 / ×1 / ×2 / ×10）· 同维度全标签统一';
             slider.style.cssText = 'width:78px;accent-color:#e94560;cursor:pointer;';
+            dim.__ar3_slider = slider;
             var adjLabel = document.createElement('span');
             adjLabel.style.cssText = 'font-size:11px;color:#e94560;font-weight:bold;min-width:78px;text-align:right;white-space:nowrap;';
 
@@ -1286,7 +1541,6 @@ APPLY_TABBED_LAYOUT = """
                 if (mode === 'add') {
                     var adds = cfg.add || [30, 10, 0, -10, -30];
                     var adj = (typeof adds[dim.__ar3_adjIdx] === 'number') ? adds[dim.__ar3_adjIdx] : 0;
-                    // Ensure integer type (SpinBox values are int, but serialized may be float).
                     adj = Math.round(adj);
                     dim.__ar3_score = dim.__ar3_autoScore + adj;
                     var adjTxt = (adj >= 0 ? '+' : '') + (adj / 100).toFixed(2);
@@ -1299,6 +1553,7 @@ APPLY_TABBED_LAYOUT = """
                 }
                 _ar3_update_score();
             };
+            dim.__ar3_apply_adj = _ar3_apply_adj;
             // User dragged this slider → apply locally. Only broadcast in multi mode.
             slider.addEventListener('input', function() {
                 _ar3_apply_adj();
@@ -1400,6 +1655,48 @@ APPLY_TABBED_LAYOUT = """
                 }
 
                 // Release guard after a tick
+                if (typeof _ar3_update_tab_slots === 'function') _ar3_update_tab_slots(letter);
+                setTimeout(function() { dim.__ar3_settingActive = false; }, 300);
+            };
+
+            var _ar3_clear_active = function() {
+                if (dim.__ar3_settingActive) return;
+                dim.__ar3_settingActive = true;
+                activeIdx = -1;
+                reasonBox.removeAttribute('data-severity');
+                if (slider) { slider.value = '2'; dim.__ar3_adjIdx = 2; }
+                dim.__ar3_score = 0;
+                dim.__ar3_autoScore = 0;
+                _ar3_update_score();
+                var allMS = document.querySelectorAll('.multiple-select');
+                for (var mi = 0; mi < allMS.length; mi++) {
+                    var lbl = allMS[mi].querySelector('.ivu-form-item-label, label');
+                    if (lbl && lbl.textContent.trim().indexOf(dim.__ar3_dimPrefix) === 0) {
+                        var items = allMS[mi].querySelectorAll('.checkboxItem');
+                        for (var k = 0; k < items.length; k++) {
+                            if ((items[k].className || '').indexOf('ivu-checkbox-wrapper-checked') >= 0) {
+                                (items[k].querySelector('input[type="checkbox"]') || items[k]).click();
+                            }
+                        }
+                        break;
+                    }
+                }
+                reasonBox.style.display = 'none';
+                if (fieldRowB) fieldRowB.style.display = 'none';
+                if (_ar3_a2_panel) _ar3_a2_panel.style.display = 'none';
+                taA.value = '';
+                taB.value = '';
+                if (sevBtns) sevBtns.forEach(function(b) {
+                    b.style.border = '1px solid #2a2a4a';
+                    b.style.background = '#1a1a2e';
+                    b.style.color = '#a0a0b0';
+                });
+                var _clearInput = _ar3_find_original_input(dim);
+                if (_clearInput) {
+                    _clearInput.focus();
+                    _clearInput.innerText = '';
+                    try { _clearInput.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText'})); } catch(e) {}
+                }
                 if (typeof _ar3_update_tab_slots === 'function') _ar3_update_tab_slots(letter);
                 setTimeout(function() { dim.__ar3_settingActive = false; }, 300);
             };
@@ -1537,7 +1834,7 @@ APPLY_TABBED_LAYOUT = """
                 _ar3_a2_panel.style.display = (_a2OnInit && initShow) ? 'block' : 'none';
             }
 
-            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
+            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, clearActive: _ar3_clear_active, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
 
             rightSide.appendChild(card);
         });
@@ -1659,6 +1956,7 @@ APPLY_TABBED_LAYOUT = """
     function _ar3_activate_tab(letter, keepFocus) {
         if (!tabs[letter]) return;
         if (typeof window.__ar3_submit_all === 'function') window.__ar3_submit_all();
+        if (typeof _ar3_add_history === 'function') _ar3_add_history('*', '', 'checkpoint');
         _ar3_active_letter = letter;
         Object.keys(tabs).forEach(function(l) {
             tabs[l].panel.style.display = 'none';
@@ -1840,7 +2138,7 @@ APPLY_TABBED_LAYOUT = """
                 // Also skip during IME composition: programmatic value assignment
                 // on a composing textarea forces composition to commit prematurely
                 // (pinyin can leak into the final text).
-                if (dim.__ar3_dirty || dim.__ar3_composing || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
+                if (dim.__ar3_dirty || dim.__ar3_composing || dim.__ar3_settingActive || (document.activeElement === ri.taA || document.activeElement === ri.taB)) return;
 
                 // Find corresponding MS to read checkbox state (by label text)
                 var allMS = _syncMS;
@@ -1899,17 +2197,28 @@ APPLY_TABBED_LAYOUT = """
 
     // Submit EVERY tab's dimensions into the original page (used on 返回原页面/解析).
     window.__ar3_submit_all = function() {
-        if (window.__ar3_dirty_models.size === 0) return;
         window.__ar3_dirty_models.forEach(function(l) {
             (tabs[l].dims || []).forEach(function(d) {
-                if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
+                if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit && d.__ar3_dirty) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
             });
         });
         window.__ar3_dirty_models.clear();
+        Object.keys(tabs).forEach(function(l) {
+            (tabs[l].dims || []).forEach(function(d) {
+                var ri = d.__ar3_reasonInfo;
+                if (!ri || !ri.compose) return;
+                var idx = ri.getActiveIdx ? ri.getActiveIdx() : -1;
+                if (idx >= 0 && ri.btnDefs && ri.btnDefs[idx].value === '不一致') {
+                    ri.compose(0, false);
+                }
+            });
+        });
     };
 
     if (_ar3_active_letter) { _ar3_activate_tab(_ar3_active_letter, true); }
     Object.keys(tabs).forEach(function(l) { _ar3_restyle_tab(l); });
+
+    if (typeof _ar3_start_auto_save === 'function') _ar3_start_auto_save();
 
     return JSON.stringify({status: 'transformed', count: modelLetters.length, models: modelLetters});
 })();
@@ -1921,6 +2230,14 @@ REMOVE_TABBED_LAYOUT = """
         if (typeof window.__ar3_submit_all === 'function') {
             try { window.__ar3_submit_all(); } catch (e) {}
         }
+        if (typeof window._ar3_stop_auto_save === 'function') window._ar3_stop_auto_save();
+        if (window.__ar3_auto_save_timer) { clearInterval(window.__ar3_auto_save_timer); window.__ar3_auto_save_timer = null; }
+        try { if (typeof window._ar3_persist_saves === 'function') window._ar3_persist_saves(); } catch(e) {}
+        window.__ar3_history = [];
+        window.__ar3_auto_saves = [];
+        window.__ar3_manual_saves = [];
+        window.__ar3_auto_save_timer = null;
+        window.__ar3_current_ts = 0;
         overlay.parentNode.removeChild(overlay);
         window.__ar3_tabs = null;
         window.__ar3_model_items = null;
@@ -2340,9 +2657,12 @@ POLL_QUEUES = """
     var popQ = window.__ar3_popup_queue || [];
     var popItems = [];
     while (popQ.length > 0) popItems.push(popQ.shift());
+    var saveQ = window.__ar3_save_queue || [];
+    var saveItems = [];
+    while (saveQ.length > 0) saveItems.push(saveQ.shift());
     var closed = !!window.__ar3_overlay_just_closed;
     window.__ar3_overlay_just_closed = false;
-    return JSON.stringify({ai: '[' + aiItems.join(',') + ']', popup: '[' + popItems.join(',') + ']', overlayClosed: closed});
+    return JSON.stringify({ai: '[' + aiItems.join(',') + ']', popup: '[' + popItems.join(',') + ']', save: '[' + saveItems.join(',') + ']', overlayClosed: closed});
 })();
 """
 

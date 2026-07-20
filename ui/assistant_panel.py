@@ -16,6 +16,7 @@ class AssistantPanel(QWidget):
     recognize_clicked = pyqtSignal()
     transform_clicked = pyqtSignal()
     remove_clicked = pyqtSignal()
+    debug_clicked = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,6 +163,34 @@ class AssistantPanel(QWidget):
         log_layout.addWidget(self.log_output)
 
         layout.addWidget(log_group)
+
+        debug_group = QGroupBox("Debug")
+        debug_group.setStyleSheet(_group_qss)
+        debug_layout = QVBoxLayout(debug_group)
+        debug_layout.setSpacing(4)
+
+        self._debug_btns = {}
+        _debug_actions = [
+            ("overlay", "Overlay 状态"),
+            ("original", "原始页面状态"),
+            ("syncer", "同步器状态"),
+            ("test_write", "测试单元格写回"),
+        ]
+        for tag, label in _debug_actions:
+            btn = QPushButton(label)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #1a1a2e; color: #a0a0b0;
+                    border: 1px solid #2a2a4a; border-radius: 3px;
+                    padding: 4px 8px; font-size: 11px;
+                }
+                QPushButton:hover { background: #0f3460; color: #e0e0e0; }
+            """)
+            btn.clicked.connect(lambda checked, t=tag: self.debug_clicked.emit(t))
+            self._debug_btns[tag] = btn
+            debug_layout.addWidget(btn)
+
+        layout.addWidget(debug_group)
         layout.addStretch()
 
     def show_recognition_result(self, result):
