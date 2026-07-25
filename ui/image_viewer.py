@@ -166,6 +166,16 @@ class ImageViewerDialog(QDialog):
 
         self._resize_grip = _ResizeGrip(self)
 
+        self._pinned = True
+        self._pin_btn = QPushButton("\U0001f4cc", self)
+        self._pin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pin_btn.setToolTip("点击取消总在最前")
+        self._pin_btn.setStyleSheet(
+            "QPushButton{background:rgba(0,0,0,0.35);color:rgba(255,255,255,0.55);"
+            "border:none;border-radius:10px;font-size:14px;padding:2px 6px;}"
+            "QPushButton:hover{background:rgba(100,100,180,0.6);color:#fff;}")
+        self._pin_btn.clicked.connect(self._toggle_pin)
+
         self._wheel_zoom_delta = 0
 
         # Event filter on the viewport: wheel → zoom ONLY (no scrolling); drag → pan.
@@ -189,6 +199,7 @@ class ImageViewerDialog(QDialog):
         self._resize_grip.setGeometry(w - 20, h - 20, 20, 20)
         self._badge_label.setGeometry(10, 10, 40, 30)
         self._badge_label.adjustSize()
+        self._pin_btn.setGeometry(self._badge_label.x() + self._badge_label.width() + 4, 10, 30, 24)
         self._dragbar.raise_()
         self._close_btn.raise_()
         self._btn_mirror.raise_()
@@ -196,6 +207,7 @@ class ImageViewerDialog(QDialog):
         self._btn_rot_right.raise_()
         self._resize_grip.raise_()
         self._badge_label.raise_()
+        self._pin_btn.raise_()
 
         if self._pixmap:
             self._pending_apply = True
@@ -278,6 +290,20 @@ class ImageViewerDialog(QDialog):
             scaled = scaled.transformed(t, Qt.TransformationMode.SmoothTransformation)
         self._label.setPixmap(scaled)
         self._label.resize(scaled.size())
+
+    def _toggle_pin(self):
+        geo = self.geometry()
+        self._pinned = not self._pinned
+        if self._pinned:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+            self._pin_btn.setText("\U0001f4cc")
+            self._pin_btn.setToolTip("点击取消总在最前")
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+            self._pin_btn.setText("\u2606")
+            self._pin_btn.setToolTip("点击总在最前")
+        self.setGeometry(geo)
+        self.show()
 
     def _on_mirror(self):
         self._mirrored = not self._mirrored

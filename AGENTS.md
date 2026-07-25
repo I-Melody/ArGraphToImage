@@ -48,6 +48,51 @@ via `QWebEnginePage(profile, view)` + `setPage()`.  Do **not** revert to
 `QWebEngineProfile.defaultProfile()` — it is off-the-record and drops all cookies.  Do **not**
 place cookie storage beside the EXE — that leaks logins across users on shared machines.
 
+### Session keepalive (`main_window._keepalive_ping`, 120 s)
+- Fetches `window.location.href` (current page URL, not origin root) with `credentials:'include'`.
+- Python callback `_on_keepalive_result` logs status; 302/401/403 are logged as warnings
+  (suspected session expiry).  **Do not revert** to `origin+'/'` or drop the callback — both
+  changes were made because the original silent HEAD to root did not prevent server-side logout.
+- The `_keepalive_timer` starts in `_on_load_finished` and runs indefinitely.
+
+### Login page detection
+`_on_url_changed` and `_on_load_finished` check the URL for keywords (`login`, `passport`,
+`signin`, `auth`, `sso`, `oauth`).  On match a warning is logged to `debug.log` and the status
+bar shows a hint.  Detection is URL-only — no DOM inspection for login forms.
+
+## Save / history persistence
+
+### Task identity
+Task signature (`_ar3_task_sig`) = **reference image `src` with query string stripped**.
+Different tasks have different images, so this is unique per question.  Do NOT change this
+to include page URL or other transient data — that would break save recovery for the same
+task across page reloads.
+
+### Save file location
+`_saves_path()` writes to `QStandardPaths.AppLocalDataLocation + "/AnnotationAssistant/.webdata/saves.json"`.
+This is per-user persistent storage — **NOT** `sys._MEIPASS` (which is PyInstaller's temporary
+directory and is wiped on restart).  `saves.json` is a dict keyed by task signature, capped at
+10 tasks (LRU eviction by latest save timestamp).
+
+### Save queue flow
+- JS: `_ar3_persist_saves()` pushes `{kind:'saves', payload:{task, auto[], manual[]}}` onto `__ar3_save_queue`.
+- Python: `_ai_timer` (400 ms) drains via `POLL_QUEUES` → `_handle_save_queue()` writes to file.
+- **`beforeunload` handler** registered in `APPLY_TABBED_LAYOUT` calls `_ar3_persist_saves()`
+  before the page unloads, so save queue items are not lost on navigation.  `REMOVE_TABBED_LAYOUT`
+  removes this handler.  If you add a new exit path from the overlay, remember to flush saves first.
+- On every page load, `_on_load_finished` clears `window.__ar3_persisted_saves = null`
+  to prevent stale saves from a previous task leaking into the new overlay's JS context.
+
+### History entries
+History snapshots are created on: (1) **tab switch** (checkpoint), (2) **severity button click**
+(`_ar3_set_active`), (3) **textarea blur** (if dirty and not composing).  Max 30 entries.
+All share the `_ar3_capture_state()` format: `{model_letter: [dimState×5]}` per model.
+
+### Restore validation
+`_ar3_restore_state` validates that the saved state's dimension count matches the current tabs'
+dimension count **per model** before applying.  Mismatch aborts the restore — this prevents
+cross-contamination when a saved state from a different task structure is accidentally loaded.
+
 ## Architecture — how it's wired
 - Entry `main.py` → `ui/main_window.py` (control hub).
 - `core/event_bus.py` `EventBus` is the central signal bus (global instance in `core/__init__.py`).
@@ -129,24 +174,20 @@ place cookie storage beside the EXE — that leaks logins across users on shared
   `textarea.value` writes during composition leak pinyin — don't add DOM writes in composition
   handlers or per-keystroke sync.
 
-## Tiled mode (平铺模式, `APPLY_TILED_LAYOUT` / `REMOVE_TILED_LAYOUT`)
-- Second parse mode selected in 「信息」→SettingsPanel「解析方式」(config `parse_mode`:
-  `tabbed`|`tiled`). 解析 button dispatches via `LayoutAdjuster.apply_layout(mode)`; the toggle
-  check and `remove_layout()` handle BOTH overlay ids (`#__ar3_tab_overlay` / `#__ar3_tile_overlay`,
-  mutually exclusive — each APPLY guards against the other being open).
-- Deliberately minimal: `#__ar3_tile_grid` = 3-col CSS grid of 参考图 + 模型A~H. Images do NOT
-  open popups on click — each cell has top-right buttons: semi-transparent ⇄/↶/↷ (mirror,
-  rotate ±15°) + 「窗口查看」(queues `__ar3_popup_queue`, same keys `ref_image`/`model_X`).
-  Per-cell wheel = zoom ×1.15 (1~10, `preventDefault`), right-button drag = pan (only when
-  zoomed; pan listeners live on the overlay so they die with it; contextmenu suppressed
-  overlay-wide), and a translucent ↻ reset button appears bottom-right once any transform is
-  active (state in `cell.__ar3_zoom`, transform = `translate rotate scale [scaleX(-1)]`).
-  Model cells reorder via HTML5 drag-and-drop (dragover does live `insertBefore`, grid reflow =
-  补位); the ref cell has no dragover handler so it stays fixed at slot 0. Bottom
-  `#__ar3_tile_rank_bar` mirrors the original page's `.rank-title` colors / `.rank-list-item`
-  order — display only, NO sorting logic yet.
-- Same status contract as tabbed (`{status, mode, count}` → shared `_on_layout_applied`); tiled
-  skips `_inject_all_config()` but still starts the poll timer (popups + `overlayClosed`).
+## Tiled compare (平铺对比, `ui/tiled_dialog.py`)
+- Replaces the old "平铺模式" parse mode. 「解析」 now always opens the tabbed overlay.
+- In the tabbed overlay's reference-image column, a **「平铺对比」button** gathers image URLs
+  (reference + models A–H) and rank data from the original page, pushes them to
+  `window.__ar3_tile_queue`.
+- Python drains via `POLL_QUEUES` (`tile` field) → opens a `TiledDialog` — a standalone
+  `QDialog` with a `QWebEngineView` that renders a self-contained HTML page via `setHtml()`.
+  The dialog uses the **same profile** so cookies are sent when loading images.
+- Features: 3-column CSS grid, wheel zoom (×1.15) + right-drag pan per cell, mirror/rotate
+  buttons, 「窗口查看」button (queues to the existing popup queue via a per-dialog poll timer),
+  HTML5 drag-and-drop model reorder, bottom rank bar with original page's rank colors/order.
+- The old `APPLY_TILED_LAYOUT` and `REMOVE_TILED_LAYOUT` templates remain in `js_templates.py`
+  (not imported by Python) for debugging and are only called during `remove_layout()` for
+  backwards compatibility cleanup of older sessions.
 
 ### Driving Vue-backed controls (non-obvious, load-bearing)
 - **Read selected option** from the wrapper class `ivu-checkbox-wrapper-checked` via

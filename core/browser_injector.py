@@ -10,7 +10,6 @@ from utils.js_templates import (
     GET_PAGE_CHANGES,
     APPLY_TABBED_LAYOUT,
     REMOVE_TABBED_LAYOUT,
-    APPLY_TILED_LAYOUT,
     REMOVE_TILED_LAYOUT,
     EVALUATION_STATE_TO_PYTHON,
 )
@@ -74,9 +73,6 @@ class BrowserInjector(QObject):
 
     def apply_tabbed_layout(self):
         self._page.runJavaScript(APPLY_TABBED_LAYOUT, self._on_layout_applied)
-
-    def apply_tiled_layout(self):
-        self._page.runJavaScript(APPLY_TILED_LAYOUT, self._on_layout_applied)
 
     def _on_layout_applied(self, result_str):
         if not result_str:

@@ -24,12 +24,14 @@ from core import event_bus
 from config import manager as config
 from utils.js_templates import POLL_QUEUES
 from ui.image_viewer import ImageViewerDialog
+from ui.tiled_dialog import TiledDialog
 
 _log = logging.getLogger("main_win")
 _WORD_CONFIG_CACHE = None
 
 
 EDGE_MARGIN = 5
+_LOGIN_URL_PATTERNS = ["login", "passport", "signin", "auth", "sso", "oauth"]
 
 
 class MainWindow(QMainWindow):
@@ -70,8 +72,8 @@ class MainWindow(QMainWindow):
         self._injector = BrowserInjector(self.browser(), self)
         self._adjuster = LayoutAdjuster(self._injector)
         self._assistant_panel = AssistantPanel(self)
+        self._tiled_dialogs = []
         self._settings_panel = SettingsPanel(self)
-        self._settings_panel.parse_mode_changed.connect(self._on_parse_mode_changed)
         self._settings_panel.sort_scheme_changed.connect(self._on_sort_scheme_changed)
         self._settings_panel.scores_changed.connect(self._on_scores_changed)
         self._settings_panel.slider_changed.connect(self._on_slider_changed)
@@ -105,7 +107,7 @@ class MainWindow(QMainWindow):
         self._ai_timer_active = False
 
         self._keepalive_timer = QTimer(self)
-        self._keepalive_timer.setInterval(180000)
+        self._keepalive_timer.setInterval(120000)
         self._keepalive_timer.timeout.connect(self._keepalive_ping)
 
     def _ai_timer_start(self):
@@ -163,6 +165,16 @@ class MainWindow(QMainWindow):
     def _on_url_changed(self, url):
         self._status_bar.showMessage(url)
         event_bus.page_navigated.emit(url)
+        self._check_login_url(url)
+
+    @staticmethod
+    def _check_login_url(url):
+        url_lower = url.lower()
+        for pat in _LOGIN_URL_PATTERNS:
+            if pat in url_lower:
+                _log.warning(f"Possible login/auth page: {url}")
+                return True
+        return False
 
     def _on_load_finished(self, ok):
         self._status_bar.showMessage("就绪" if ok else "加载失败")
@@ -171,8 +183,12 @@ class MainWindow(QMainWindow):
             return
         url = self.browser().url().toString()
         _log.info(f"Page loaded: {url}")
+        self.browser().page().runJavaScript("window.__ar3_persisted_saves = null;")
         self._inject_word_config()
         event_bus.page_loaded.emit(url)
+        if self._check_login_url(url):
+            _log.warning(f"Login/auth page detected: {url}")
+            self._status_bar.showMessage("检测到登录页面，请登录后手动导航至标注页")
         self._injector.start_monitoring()
         self._monitor_timer.start()
         self._keepalive_timer.start()
@@ -182,7 +198,21 @@ class MainWindow(QMainWindow):
 
     def _keepalive_ping(self):
         self.browser().page().runJavaScript(
-            "fetch(window.location.origin+'/',{method:'HEAD',cache:'no-store'}).catch(function(){})")
+            "fetch(window.location.href,{method:'HEAD',credentials:'include',cache:'no-store'})"
+            ".then(function(r){return r.status;}).catch(function(e){return 'err:'+e.message;})",
+            self._on_keepalive_result)
+
+    def _on_keepalive_result(self, status):
+        if status is None:
+            _log.warning("Keepalive: no result (page may have navigated)")
+            return
+        s = str(status)
+        if s.startswith("err:"):
+            _log.warning(f"Keepalive failed: {s[4:]}")
+        elif s in ("302", "401", "403"):
+            _log.warning(f"Keepalive: server responded {s} — session may be expired")
+        else:
+            _log.debug(f"Keepalive OK: status {s}")
 
     def _on_queues_polled(self, payload):
         if not payload or payload == "null":
@@ -191,15 +221,129 @@ class MainWindow(QMainWindow):
             data = json.loads(payload)
         except (json.JSONDecodeError, TypeError):
             return
-        ai_payload = data.get("ai", "[]")
-        popup_payload = data.get("popup", "[]")
-        save_payload = data.get("save", "[]")
-        self._dispatch_ai_requests(ai_payload)
-        self._dispatch_popup_requests(popup_payload)
-        self._handle_save_queue(save_payload)
-        if data.get("overlayClosed"):
-            self._browser_panel.set_url_bar_visible(True)
-            self._ai_timer_stop()
+        try:
+            ai_payload = data.get("ai", "[]")
+            popup_payload = data.get("popup", "[]")
+            save_payload = data.get("save", "[]")
+            tile_payload = data.get("tile", "[]")
+            tile_sync_payload = data.get("tileSync", "[]")
+            if tile_sync_payload and tile_sync_payload != "[]":
+                _log.info(f"Poll: tileSync data = {tile_sync_payload[:300]}")
+            self._dispatch_ai_requests(ai_payload)
+            self._dispatch_popup_requests(popup_payload)
+            self._handle_save_queue(save_payload)
+            self._dispatch_tile_requests(tile_payload)
+            self._dispatch_tile_sync(tile_sync_payload)
+            if data.get("overlayClosed"):
+                self._browser_panel.set_url_bar_visible(True)
+                self._ai_timer_stop()
+        except Exception as e:
+            _log.warning(f"_on_queues_polled failed: {e}")
+
+    def _dispatch_tile_requests(self, payload):
+        if not payload or payload == "[]":
+            return
+        try:
+            items = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return
+        profile = self.browser_panel().profile()
+        for item in items:
+            try:
+                dlg = TiledDialog(item, parent=None, profile=profile)
+                dlg.finished.connect(lambda d=dlg: self._on_tile_dialog_closed(d))
+                dlg.show()
+                self._start_tile_popup_poll(dlg)
+                self._tiled_dialogs.append(dlg)
+            except Exception as e:
+                _log.warning(f"Failed to open tiled dialog: {e}")
+
+    def _on_tile_dialog_closed(self, dlg):
+        if dlg in self._tiled_dialogs:
+            self._tiled_dialogs.remove(dlg)
+        self._stop_tile_timer()
+
+    def _dispatch_tile_sync(self, payload):
+        if not payload or payload == "[]":
+            return
+        try:
+            items = json.loads(payload)
+        except (json.JSONDecodeError, TypeError) as e:
+            _log.warning(f"Tile sync JSON parse failed: {e} — raw: {str(payload)[:200]}")
+            return
+        if not items:
+            return
+        _sync_data = items[-1]
+        _log.info(f"Tile sync: active={_sync_data.get('active','?')} dialogs={len(self._tiled_dialogs)} keys={list(_sync_data.keys())}")
+        alive = []
+        for dlg in self._tiled_dialogs:
+            if not dlg.has_view():
+                _log.info("Tile sync: dialog has no view, skipping")
+                continue
+            alive.append(dlg)
+            try:
+                dlg.page().runJavaScript(
+                    f"window.setTileHighlight({json.dumps(_sync_data)});")
+                _log.info(f"Tile sync: dispatched to dialog")
+            except Exception as e:
+                _log.warning(f"Tile sync dispatch failed: {e}")
+        self._tiled_dialogs = alive
+
+    def _stop_tile_timer(self):
+        if hasattr(self, '_tile_popup_timer') and self._tile_popup_timer is not None:
+            self._tile_popup_timer.stop()
+            self._tile_popup_timer = None
+
+    def _start_tile_popup_poll(self, dlg):
+        self._tile_popup_timer = QTimer(self)
+        self._tile_popup_timer.setInterval(400)
+        def _poll():
+            if not dlg.has_view():
+                return
+            try:
+                dlg.page().runJavaScript(
+                    "(function(){var q=window.__ar3_tile_popup_queue||[];var pi=[];while(q.length>0)pi.push(q.shift());var sq=window.__ar3_tile_switch_queue||[];var si=[];while(sq.length>0)si.push(sq.shift());return JSON.stringify({popup:pi,switchTab:si});})()",
+                    lambda result: self._on_tile_poll_result(dlg, result))
+            except Exception as e:
+                _log.warning(f"Tile popup poll failed: {e}")
+        self._tile_popup_timer.timeout.connect(_poll)
+        self._tile_popup_timer.start()
+
+    def _on_tile_poll_result(self, dlg, result):
+        if not result:
+            return
+        try:
+            data = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return
+        popup = data.get("popup", [])
+        if popup:
+            reqs = []
+            for it in popup:
+                if isinstance(it, str):
+                    try:
+                        it = json.loads(it)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                if isinstance(it, dict):
+                    reqs.append(it)
+            if reqs:
+                self._dispatch_popup_requests(json.dumps(reqs))
+        switch_list = data.get("switchTab", [])
+        if switch_list:
+            _log.debug(f"Tile switch request: {switch_list}")
+        for sw in switch_list:
+            letter = None
+            if isinstance(sw, str):
+                try:
+                    sw = json.loads(sw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if isinstance(sw, dict):
+                letter = sw.get("letter")
+            if letter:
+                self.browser().page().runJavaScript(
+                    f"if(typeof _ar3_activate_tab==='function')_ar3_activate_tab('{letter}');")
 
     def _dispatch_ai_requests(self, payload):
         if not payload or payload == "[]":
@@ -208,13 +352,22 @@ class MainWindow(QMainWindow):
             requests = json.loads(payload)
         except (json.JSONDecodeError, TypeError):
             return
+        if not isinstance(requests, list):
+            _log.warning(f"_dispatch_ai_requests: expected list, got {type(requests).__name__}")
+            return
         _log.info(f"Dispatching {len(requests)} AI request(s)")
         for req in requests:
-            rid = req.get("id")
-            ref = req.get("ref")
-            desc = req.get("desc")
-            if rid and ref:
-                self._ai_client.describe(rid, ref, desc)
+            try:
+                if not isinstance(req, dict):
+                    _log.warning(f"_dispatch_ai_requests: bad item type {type(req).__name__}")
+                    continue
+                rid = req.get("id")
+                ref = req.get("ref")
+                desc = req.get("desc")
+                if rid and ref:
+                    self._ai_client.describe(rid, ref, desc)
+            except Exception as e:
+                _log.warning(f"_dispatch_ai_requests: item failed: {e}")
 
     def _dispatch_popup_requests(self, payload):
         if not payload or payload == "[]":
@@ -223,22 +376,36 @@ class MainWindow(QMainWindow):
             requests = json.loads(payload)
         except (json.JSONDecodeError, TypeError):
             return
+        if not isinstance(requests, list):
+            _log.warning(f"_dispatch_popup_requests: expected list, got {type(requests).__name__}")
+            return
         page = self.browser().page()
         for req in requests:
-            key = req.get("key")
-            if key == "__close_all__":
-                ImageViewerDialog.close_all()
-                continue
-            src = req.get("src")
-            if key and src and hasattr(page, "open_image_popup"):
-                page.open_image_popup(key, src)
+            try:
+                if isinstance(req, str):
+                    try:
+                        req = json.loads(req)
+                    except (json.JSONDecodeError, TypeError):
+                        _log.warning(f"_dispatch_popup_requests: bad popup item (str): {req[:200]}")
+                        continue
+                if not isinstance(req, dict):
+                    _log.warning(f"_dispatch_popup_requests: bad popup item type {type(req).__name__}")
+                    continue
+                key = req.get("key")
+                if key == "__close_all__":
+                    ImageViewerDialog.close_all()
+                    continue
+                src = req.get("src")
+                if key and src and hasattr(page, "open_image_popup"):
+                    page.open_image_popup(key, src)
+            except Exception as e:
+                _log.warning(f"_dispatch_popup_requests: item failed: {e}")
 
     def _saves_path(self):
         import os
-        if getattr(sys, 'frozen', False):
-            root = sys._MEIPASS
-        else:
-            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        from PyQt6.QtCore import QStandardPaths
+        data_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        root = os.path.join(data_dir, "AnnotationAssistant")
         return os.path.join(root, ".webdata", "saves.json")
 
     def _handle_save_queue(self, payload):
@@ -260,8 +427,8 @@ class MainWindow(QMainWindow):
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    _log.warning(f"Failed to read saves.json: {ex}")
             for item in items:
                 p = item.get("payload", {})
                 task = p.get("task", "0")
@@ -281,8 +448,10 @@ class MainWindow(QMainWindow):
                     del data[k]
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
+            _log.debug(f"Saved {len(items)} queue item(s) to {path} ({len(data)} tasks)")
         except Exception as e:
             _log.warning(f"Save queue persist failed: {e}")
+            self._status_bar.showMessage(f"保存失败: {e}")
 
     def _inject_persisted_saves(self):
         import os
@@ -482,11 +651,6 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("A2 色调滑杆已" + ("开启" if enabled else "关闭"))
         _log.info(f"Auto-fill A2: {enabled}")
 
-    def _on_parse_mode_changed(self, mode):
-        self._status_bar.showMessage(
-            "解析方式：平铺模式" if mode == "tiled" else "解析方式：标签页模式")
-        _log.info(f"Parse mode changed: {mode}")
-
     def _on_sort_scheme_changed(self, scheme):
         js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
         self.browser().page().runJavaScript(js)
@@ -610,11 +774,10 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(f"解析完成: {result.model_count}个模型, {result.dimension_count}个维度")
 
         if self._auto_apply_after_detect and result.matched and result.model_count > 0:
-            mode = config.get("parse_mode", "tabbed")
-            _log.info(f"Auto-applying layout after detection (mode={mode})")
+            _log.info("Auto-applying tabbed layout after detection")
             try:
                 self._inject_persisted_saves()
-                self._adjuster.apply_layout(mode)
+                self._adjuster.apply_tabbed_layout()
             except Exception as e:
                 _log.exception("Layout apply failed")
                 self._status_bar.showMessage(f"布局失败: {e}")
