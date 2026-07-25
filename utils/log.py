@@ -3,6 +3,26 @@ import os
 from datetime import datetime
 
 _INITIALIZED = False
+_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _trim_if_needed(path):
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return
+    if size <= _MAX_BYTES:
+        return
+    try:
+        with open(path, "rb") as f:
+            f.seek(size - int(_MAX_BYTES * 0.75))
+            f.readline()
+            tail = f.read()
+        with open(path, "wb") as f:
+            f.write(b"[... older log truncated ...]\n")
+            f.write(tail)
+    except Exception:
+        pass
 
 
 def setup(log_dir=None):
@@ -16,8 +36,10 @@ def setup(log_dir=None):
 
     log_path = os.path.join(log_dir, "debug.log")
 
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [INFO ] app     : === Session started ===\n")
+    _trim_if_needed(log_path)
+
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [INFO ] app     : === Session started ===\n")
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
