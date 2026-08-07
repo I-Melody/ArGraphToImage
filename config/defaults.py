@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     "auto_fill_a3": False,
     "auto_fill_a4": False,
     "auto_fill_a2": False,
+    "auto_fix_a2": True,
     "auto_save_interval_sec": 45,
     "slider_mode": "multi",
     "slider_multi": [0.1, 0.5, 1.0, 2.0, 10.0],

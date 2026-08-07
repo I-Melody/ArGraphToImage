@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         self._ai_settings_panel.auto_fill_a3_changed.connect(self._on_auto_fill_a3_changed)
         self._ai_settings_panel.auto_fill_a4_changed.connect(self._on_auto_fill_a4_changed)
         self._ai_settings_panel.auto_fill_a2_changed.connect(self._on_auto_fill_a2_changed)
+        self._ai_settings_panel.auto_fix_a2_changed.connect(self._on_auto_fix_a2_changed)
         self._info_dialog = None
         self._ai_client = AiClient(self)
         self._ai_client.describe_done.connect(self._on_ai_described)
@@ -651,6 +652,11 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("A2 色调滑杆已" + ("开启" if enabled else "关闭"))
         _log.info(f"Auto-fill A2: {enabled}")
 
+    def _on_auto_fix_a2_changed(self, enabled):
+        self.browser().page().runJavaScript(f"window.__ar3_auto_fix_a2 = {json.dumps(enabled)};")
+        self._status_bar.showMessage("A2 修复按钮已" + ("开启" if enabled else "关闭"))
+        _log.info(f"Auto-fix A2: {enabled}")
+
     def _on_sort_scheme_changed(self, scheme):
         js = f"window.__ar3_sort_scheme = {json.dumps(scheme)};"
         self.browser().page().runJavaScript(js)
@@ -708,8 +714,9 @@ class MainWindow(QMainWindow):
         auto_fill_a3 = json.dumps(config.get("auto_fill_a3", False))
         auto_fill_a4 = json.dumps(config.get("auto_fill_a4", False))
         auto_fill_a2 = json.dumps(config.get("auto_fill_a2", False))
+        auto_fix_a2 = json.dumps(config.get("auto_fix_a2", True))
         auto_save_ms = max(15, int(config.get("auto_save_interval_sec", 45))) * 1000
-        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";window.__ar3_ai_model=" + json.dumps(ai_model) + ";window.__ar3_auto_fill_model=" + auto_fill + ";window.__ar3_auto_fill_a3=" + auto_fill_a3 + ";window.__ar3_auto_fill_a4=" + auto_fill_a4 + ";window.__ar3_auto_fill_a2=" + auto_fill_a2 + ";window.__ar3_auto_save_interval_ms=" + str(auto_save_ms) + ";"
+        js = "window.__ar3_sort_scheme=" + json.dumps(scheme) + ";window.__ar3_scores=" + json.dumps(s) + ";window.__ar3_slider_cfg=" + json.dumps(slider) + ";window.__ar3_ai_model=" + json.dumps(ai_model) + ";window.__ar3_auto_fill_model=" + auto_fill + ";window.__ar3_auto_fill_a3=" + auto_fill_a3 + ";window.__ar3_auto_fill_a4=" + auto_fill_a4 + ";window.__ar3_auto_fill_a2=" + auto_fill_a2 + ";window.__ar3_auto_fix_a2=" + auto_fix_a2 + ";window.__ar3_auto_save_interval_ms=" + str(auto_save_ms) + ";"
         self.browser().page().runJavaScript(js)
         self._inject_persisted_saves()
 

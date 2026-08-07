@@ -370,6 +370,10 @@ APPLY_TABBED_LAYOUT = """
         window.__ar3_last_ai = {};
         window.__ar3_ai_task_sig = _ar3_task_sig;
     }
+    if (window.__ar3_task_sig !== _ar3_task_sig) {
+        window.__ar3_a2_fixed = false;
+        window.__ar3_task_sig = _ar3_task_sig;
+    }
     var _ar3_ai_order = ['整体身份','整体形状与局部结构','颜色与材质','图案装饰logo商标','文字信息'];
 
     var _ar3_grab_img = function(img) {
@@ -1185,6 +1189,69 @@ APPLY_TABBED_LAYOUT = """
         var headerRight = document.createElement('div');
         headerRight.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
 
+        var fixBtn = document.createElement('button');
+        fixBtn.className = '__ar3_fix_a2_btn';
+        fixBtn.textContent = '修复';
+        fixBtn.title = '将A2维度已填充的生成图描述中深/浅、艳/柔、亮/暗、冷/暖互换（仅一次）';
+        fixBtn.style.cssText = 'background:#7a5a0e;color:#e0e0e0;border:1px solid #e0a030;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:13px;font-weight:bold;font-family:inherit;white-space:nowrap;';
+        if (!(window.__ar3_auto_fix_a2 !== false)) fixBtn.style.display = 'none';
+        fixBtn.onclick = function() {
+            if (window.__ar3_a2_fixed) return;
+            window.__ar3_a2_fixed = true;
+            var _pairs = [
+                ['整体颜色很深','整体颜色很浅'],
+                ['整体颜色深','整体颜色浅'],
+                ['整体颜色较深','整体颜色较浅'],
+                ['色彩很艳丽','色彩很柔和'],
+                ['色彩艳丽','色彩柔和'],
+                ['色彩较艳丽','色彩较柔和'],
+                ['打光很亮','打光很暗'],
+                ['打光亮','打光暗'],
+                ['打光较亮','打光较暗'],
+                ['色调明显偏冷','色调明显偏暖'],
+                ['色调偏冷','色调偏暖'],
+                ['色调轻度偏冷','色调轻度偏暖']
+            ];
+            var TMP = '\x00A2FIX\x00';
+            var count = 0;
+            Object.keys(evalByModel).forEach(function(l) {
+                (evalByModel[l] || []).forEach(function(dim) {
+                    var mm = (dim.__ar3_dimPrefix || '').match(/A(\\d+)$/);
+                    if (!mm || parseInt(mm[1],10) !== 2) return;
+                    var ri = dim.__ar3_reasonInfo;
+                    if (!ri || !ri.taB) return;
+                    var txt = ri.taB.value;
+                    if (!txt) return;
+                    for (var pi = 0; pi < _pairs.length; pi++) {
+                        var dark = _pairs[pi][0], light = _pairs[pi][1];
+                        txt = txt.split(dark).join(TMP);
+                        txt = txt.split(light).join(dark);
+                        txt = txt.split(TMP).join(light);
+                    }
+                    if (txt !== ri.taB.value) {
+                        ri.taB.value = txt;
+                        if (typeof ri.parseA2Sliders === 'function') ri.parseA2Sliders();
+                        if (typeof _ar3_mark_dim_dirty === 'function') _ar3_mark_dim_dirty(dim);
+                        count++;
+                    }
+                });
+            });
+            fixBtn.textContent = '已修复(' + count + ')';
+            fixBtn.style.background = '#0e7a3a';
+            fixBtn.style.border = '1px solid #0e7a3a';
+            fixBtn.style.cursor = 'default';
+            fixBtn.disabled = true;
+            var allFixBtns = document.querySelectorAll('.__ar3_fix_a2_btn');
+            for (var fi = 0; fi < allFixBtns.length; fi++) {
+                allFixBtns[fi].textContent = '已修复(' + count + ')';
+                allFixBtns[fi].style.background = '#0e7a3a';
+                allFixBtns[fi].style.border = '1px solid #0e7a3a';
+                allFixBtns[fi].style.cursor = 'default';
+                allFixBtns[fi].disabled = true;
+            }
+        };
+        headerRight.appendChild(fixBtn);
+
         // Tab-level submit button (left of the score badge) — writes EVERY dimension
         // of this model into the original page in one click (replaces per-dim 确定).
         var submitBtn = document.createElement('button');
@@ -1476,7 +1543,7 @@ APPLY_TABBED_LAYOUT = """
                     var s = document.createElement('input');
                     s.type = 'range';
                     s.min = '0'; s.max = '2'; s.value = '1'; s.step = '1';
-                    s.style.cssText = 'writing-mode:vertical-lr;direction:rtl;width:18px;height:70px;accent-color:#e94560;cursor:pointer;margin:4px 0;';
+                    s.style.cssText = 'writing-mode:vertical-lr;width:18px;height:70px;accent-color:#e94560;cursor:pointer;margin:4px 0;';
                     s.addEventListener('input', _ar3_a2_compose);
                     col.appendChild(s);
                     var labBot = document.createElement('span');
@@ -1533,6 +1600,23 @@ APPLY_TABBED_LAYOUT = """
 
                 p.appendChild(row);
                 _ar3_a2_panel = p;
+
+                if (taB && taB.value) {
+                    var _txt = taB.value;
+                    if (/整体颜色很深|整体颜色深|整体颜色较深/.test(_txt)) _ar3_a2_depth_slider.value = '0';
+                    else if (/整体颜色很浅|整体颜色浅|整体颜色较浅/.test(_txt)) _ar3_a2_depth_slider.value = '2';
+                    if (/色彩很艳丽|色彩艳丽|色彩较艳丽/.test(_txt)) _ar3_a2_vivid_slider.value = '0';
+                    else if (/色彩很柔和|色彩柔和|色彩较柔和/.test(_txt)) _ar3_a2_vivid_slider.value = '2';
+                    if (/打光很亮|打光亮|打光较亮/.test(_txt)) _ar3_a2_light_slider.value = '0';
+                    else if (/打光很暗|打光暗|打光较暗/.test(_txt)) _ar3_a2_light_slider.value = '2';
+                    if (/色调明显偏冷|色调偏冷|色调轻度偏冷/.test(_txt)) _ar3_a2_warmth_slider.value = '0';
+                    else if (/色调明显偏暖|色调偏暖|色调轻度偏暖/.test(_txt)) _ar3_a2_warmth_slider.value = '2';
+                    var _cm = _txt.match(/颜色偏(\S+?)(?:[。\\n]|$)/);
+                    if (_cm && _ar3_a2_color_input) _ar3_a2_color_input.value = _cm[1];
+                    var _remain = _txt.replace(/整体颜色(?:很深|深|较深|很浅|浅|较浅)|色彩(?:很艳丽|艳丽|较艳丽|很柔和|柔和|较柔和)|打光(?:很亮|亮|较亮|很暗|暗|较暗)|色调(?:明显偏冷|偏冷|轻度偏冷|明显偏暖|偏暖|轻度偏暖)|颜色偏\\S+?/g, '').replace(/^[。\\s]+|[。\\s]+$/g, '').trim();
+                    if (_remain && _ar3_a2_extra_input) _ar3_a2_extra_input.value = _remain;
+                }
+
                 return p;
             };
 
@@ -1637,6 +1721,7 @@ APPLY_TABBED_LAYOUT = """
                 dim.__ar3_settingActive = true;
 
                 activeIdx = idx;
+                if (dim.__ar3_reasonInfo) dim.__ar3_reasonInfo._activeIdx = idx;
                 var def = btnDefs[idx];
                 reasonBox.setAttribute('data-severity', def.severity);
                 // Read score dynamically so that settings changes take effect immediately.
@@ -1714,7 +1799,6 @@ APPLY_TABBED_LAYOUT = """
 
                 // Release guard after a tick
                 if (typeof _ar3_update_tab_slots === 'function') _ar3_update_tab_slots(letter);
-                if (typeof _ar3_add_history === 'function') _ar3_add_history(letter, dim.__ar3_dimPrefix, 'severity: ' + def.label);
                 setTimeout(function() { dim.__ar3_settingActive = false; }, 300);
             };
 
@@ -1884,14 +1968,8 @@ APPLY_TABBED_LAYOUT = """
                 if (typeof _ar3_update_progress === 'function') _ar3_update_progress();
             });
             taA.addEventListener('blur', function() {
-                if (dim.__ar3_dirty && !dim.__ar3_composing && typeof _ar3_add_history === 'function') {
-                    _ar3_add_history(letter, dim.__ar3_dimPrefix, 'ref_text: ' + (taA.value || '').substring(0, 20));
-                }
             });
             taB.addEventListener('blur', function() {
-                if (dim.__ar3_dirty && !dim.__ar3_composing && typeof _ar3_add_history === 'function') {
-                    _ar3_add_history(letter, dim.__ar3_dimPrefix, 'gen_text: ' + (taB.value || '').substring(0, 20));
-                }
             });
 
             // Initial visibility: show only for 不一致 (一致/不适用 hide the inputs)
@@ -1903,7 +1981,35 @@ APPLY_TABBED_LAYOUT = """
                 _ar3_a2_panel.style.display = (_a2OnInit && initShow) ? 'block' : 'none';
             }
 
-            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, clearActive: _ar3_clear_active, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; }};
+            dim.__ar3_reasonInfo = {box: reasonBox, taA: taA, taB: taB, compose: _ar3_compose_reason, setActive: _ar3_set_active, clearActive: _ar3_clear_active, btnDefs: btnDefs, submit: function() { _ar3_compose_reason(0, false); }, getActiveIdx: function() { return activeIdx; },
+                _a2DepthSlider: _ar3_a2_depth_slider, _a2VividSlider: _ar3_a2_vivid_slider, _a2LightSlider: _ar3_a2_light_slider, _a2WarmthSlider: _ar3_a2_warmth_slider, _a2ColorInput: _ar3_a2_color_input,
+                parseA2Sliders: function() {
+                    var txt = taB.value;
+                    if (!txt) return;
+                    if (_ar3_a2_depth_slider) {
+                        if (/整体颜色很深|整体颜色深|整体颜色较深/.test(txt)) _ar3_a2_depth_slider.value = '0';
+                        else if (/整体颜色很浅|整体颜色浅|整体颜色较浅/.test(txt)) _ar3_a2_depth_slider.value = '2';
+                    }
+                    if (_ar3_a2_vivid_slider) {
+                        if (/色彩很艳丽|色彩艳丽|色彩较艳丽/.test(txt)) _ar3_a2_vivid_slider.value = '0';
+                        else if (/色彩很柔和|色彩柔和|色彩较柔和/.test(txt)) _ar3_a2_vivid_slider.value = '2';
+                    }
+                    if (_ar3_a2_light_slider) {
+                        if (/打光很亮|打光亮|打光较亮/.test(txt)) _ar3_a2_light_slider.value = '0';
+                        else if (/打光很暗|打光暗|打光较暗/.test(txt)) _ar3_a2_light_slider.value = '2';
+                    }
+                    if (_ar3_a2_warmth_slider) {
+                        if (/色调明显偏冷|色调偏冷|色调轻度偏冷/.test(txt)) _ar3_a2_warmth_slider.value = '0';
+                        else if (/色调明显偏暖|色调偏暖|色调轻度偏暖/.test(txt)) _ar3_a2_warmth_slider.value = '2';
+                    }
+                    if (_ar3_a2_color_input) {
+                        var cm = txt.match(/颜色偏(\S+?)(?:[。\\n]|$)/);
+                        if (cm) _ar3_a2_color_input.value = cm[1];
+                    }
+                    var remain = txt.replace(/整体颜色(?:很深|深|较深|很浅|浅|较浅)|色彩(?:很艳丽|艳丽|较艳丽|很柔和|柔和|较柔和)|打光(?:很亮|亮|较亮|很暗|暗|较暗)|色调(?:明显偏冷|偏冷|轻度偏冷|明显偏暖|偏暖|轻度偏暖)|颜色偏\\S+?/g, '').replace(/^[。\\s]+|[。\\s]+$/g, '').trim();
+                    if (remain && _ar3_a2_extra_input) _ar3_a2_extra_input.value = remain;
+                }
+            };
 
             rightSide.appendChild(card);
         });
@@ -2236,6 +2342,7 @@ APPLY_TABBED_LAYOUT = """
                 var _gmRe2 = new RegExp('生成图[：:][\\\\s\\\\S]*?(?=' + _sev_all.join('|') + '|$)');
                 var gm = raw.match(_gmRe2);
                 ri.taB.value = gm ? gm[0].replace(/^生成图[：:]\\s*/, '').trim() : '';
+                if (ri.parseA2Sliders) ri.parseA2Sliders();
                 var foundSev = '';
                 for (var si = 0; si < _sev_all.length; si++) {
                     if (raw.indexOf(_sev_all[si]) >= 0) { foundSev = _sev_all[si]; break; }
@@ -2274,22 +2381,13 @@ APPLY_TABBED_LAYOUT = """
 
     // Submit EVERY tab's dimensions into the original page (used on 返回原页面/解析).
     window.__ar3_submit_all = function() {
+        if (window.__ar3_dirty_models.size === 0) return;
         window.__ar3_dirty_models.forEach(function(l) {
             (tabs[l].dims || []).forEach(function(d) {
                 if (d.__ar3_reasonInfo && d.__ar3_reasonInfo.submit && d.__ar3_dirty) { d.__ar3_reasonInfo.submit(); d.__ar3_dirty = false; }
             });
         });
         window.__ar3_dirty_models.clear();
-        Object.keys(tabs).forEach(function(l) {
-            (tabs[l].dims || []).forEach(function(d) {
-                var ri = d.__ar3_reasonInfo;
-                if (!ri || !ri.compose) return;
-                var idx = ri.getActiveIdx ? ri.getActiveIdx() : -1;
-                if (idx >= 0 && ri.btnDefs && ri.btnDefs[idx].value === '不一致') {
-                    ri.compose(0, false);
-                }
-            });
-        });
     };
 
     if (_ar3_active_letter) { _ar3_activate_tab(_ar3_active_letter, true); }

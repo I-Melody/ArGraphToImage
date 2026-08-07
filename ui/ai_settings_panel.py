@@ -21,6 +21,7 @@ class AiSettingsPanel(QWidget):
     auto_fill_a3_changed = pyqtSignal(bool)
     auto_fill_a4_changed = pyqtSignal(bool)
     auto_fill_a2_changed = pyqtSignal(bool)
+    auto_fix_a2_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -155,6 +156,12 @@ class AiSettingsPanel(QWidget):
         self.auto_fill_a2_check.toggled.connect(self._on_auto_fill_a2_changed)
         auto_fill_layout.addWidget(self.auto_fill_a2_check)
 
+        self.auto_fix_a2_check = QCheckBox("A2 条目：启用「修复」按钮（可反转滑杆填充方向）")
+        self.auto_fix_a2_check.setToolTip("开启后，在模型页 提交全部 按钮左侧显示「修复」按钮，点击可将A2维度中深/浅、艳/柔、亮/暗、冷/暖描述互换")
+        self.auto_fix_a2_check.setStyleSheet(self.auto_fill_check.styleSheet())
+        self.auto_fix_a2_check.toggled.connect(self._on_auto_fix_a2_changed)
+        auto_fill_layout.addWidget(self.auto_fix_a2_check)
+
         self.auto_fill_a3_check = QCheckBox("A3 条目：切换为轻/中/重度时自动填充模型图描述")
         self.auto_fill_a3_check.setToolTip("开启后，在A3(图案装饰logo商标)维度点击轻度/中度/重度时，若生成图描述为空则自动填入对应默认文本")
         self.auto_fill_a3_check.setStyleSheet(self.auto_fill_check.styleSheet())
@@ -198,6 +205,7 @@ class AiSettingsPanel(QWidget):
         self.auto_fill_a3_check.setChecked(bool(config.get("auto_fill_a3", False)))
         self.auto_fill_a4_check.setChecked(bool(config.get("auto_fill_a4", False)))
         self.auto_fill_a2_check.setChecked(bool(config.get("auto_fill_a2", False)))
+        self.auto_fix_a2_check.setChecked(bool(config.get("auto_fix_a2", True)))
 
     def _on_toggle_show(self, checked):
         self.api_input.setEchoMode(
@@ -245,3 +253,9 @@ class AiSettingsPanel(QWidget):
         cfg["auto_fill_a2"] = bool(checked)
         config.save(cfg)
         self.auto_fill_a2_changed.emit(bool(checked))
+
+    def _on_auto_fix_a2_changed(self, checked):
+        cfg = config.load()
+        cfg["auto_fix_a2"] = bool(checked)
+        config.save(cfg)
+        self.auto_fix_a2_changed.emit(bool(checked))

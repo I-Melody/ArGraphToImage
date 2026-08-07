@@ -84,8 +84,9 @@ directory and is wiped on restart).  `saves.json` is a dict keyed by task signat
   to prevent stale saves from a previous task leaking into the new overlay's JS context.
 
 ### History entries
-History snapshots are created on: (1) **tab switch** (checkpoint), (2) **severity button click**
-(`_ar3_set_active`), (3) **textarea blur** (if dirty and not composing).  Max 30 entries.
+History snapshots are created on: (1) **tab switch** — only if `__ar3_dirty_models.size > 0`
+(i.e. no checkpoint when nothing changed), (2) **severity button click** (`_ar3_set_active`),
+(3) **textarea blur** (if dirty and not composing).  Max 30 entries.
 All share the `_ar3_capture_state()` format: `{model_letter: [dimState×5]}` per model.
 
 ### Restore validation
@@ -184,10 +185,16 @@ cross-contamination when a saved state from a different task structure is accide
   The dialog uses the **same profile** so cookies are sent when loading images.
 - Features: 3-column CSS grid, wheel zoom (×1.15) + right-drag pan per cell, mirror/rotate
   buttons, 「窗口查看」button (queues to the existing popup queue via a per-dialog poll timer),
-  HTML5 drag-and-drop model reorder, bottom rank bar with original page's rank colors/order.
-- The old `APPLY_TILED_LAYOUT` and `REMOVE_TILED_LAYOUT` templates remain in `js_templates.py`
-  (not imported by Python) for debugging and are only called during `remove_layout()` for
-  backwards compatibility cleanup of older sessions.
+  HTML5 drag-and-drop model reorder.
+- **Bidirectional tab linkage**: 
+  - Tabbed→Tiled: `_ar3_activate_tab` pushes `{active, states: {A:{incomplete},...}}` to
+    `__ar3_tile_sync_queue`, Python dispatches to `window.setTileHighlight()` which adds a 3px
+    border (amber=incomplete, white=complete) to the active model cell.
+  - Tiled→Tabbed: clicking a cell label pushes to `__ar3_tile_switch_queue`, Python calls
+    `window._ar3_activate_tab(letter)` on the main page.  (Note: `_ar3_activate_tab` MUST be
+    exposed as `window._ar3_activate_tab` — it is a local `var` inside the APPLY IIFE.)
+- `APPLY_TILED_LAYOUT` is no longer imported by Python. `REMOVE_TILED_LAYOUT` is still imported
+  and called during `remove_layout()` for backwards-compatibility cleanup of older sessions.
 
 ### Driving Vue-backed controls (non-obvious, load-bearing)
 - **Read selected option** from the wrapper class `ivu-checkbox-wrapper-checked` via
@@ -237,8 +244,9 @@ cross-contamination when a saved state from a different task structure is accide
 - Dims order: 整体身份 / 整体形状与局部结构 / 颜色与材质 / 图案装饰品牌Logo商标 / 文字信息.
 
 ## Logging & conventions
-- `debug.log` at root is truncated on every startup. `utils/log.py` installs a root-logger
-  handler, so ALL stdlib `logging` output lands in `debug.log` (format
+- `debug.log` at root is **appended across sessions**, not truncated. `utils/log.py` writes a
+  `=== Session started ===` separator on each run and auto-trims the file when it exceeds 2 MB
+  (keeps last ~1.5 MB). All stdlib `logging` output lands in `debug.log` (format
   `[HH:MM:SS.mmm] [LEVEL] source: msg`) — useful first stop when debugging.
 - No code comments unless explicitly requested (existing files follow this).
 - User config in `config.json` at root, managed by `config/manager.py` (`config/defaults.py` =
